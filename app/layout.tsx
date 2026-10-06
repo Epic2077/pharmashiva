@@ -1,15 +1,15 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { DynaPuff, Geist, Geist_Mono, Vazirmatn } from "next/font/google";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const dynaPuff = DynaPuff({
+  variable: "--font-dyna-puff",
   subsets: ["latin"],
+  weight: ["400", "500", "700"],
 });
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
+const vazirmatn = Vazirmatn({
+  variable: "--font-vazir-matn",
+  subsets: ["latin", "arabic"],
 });
 
 export const metadata: Metadata = {
@@ -20,8 +20,9 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
-      lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      lang="fa"
+      className={`${vazirmatn.variable} ${dynaPuff.variable} h-full antialiased vazir-matn`}
+      dir="rtl"
     >
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
