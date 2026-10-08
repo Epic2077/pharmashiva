@@ -1,15 +1,20 @@
 import type { Metadata } from "next";
-import { DynaPuff, Geist, Geist_Mono, Vazirmatn } from "next/font/google";
+import {
+  DynaPuff,
+  Geist,
+  Geist_Mono,
+  Manrope,
+  Vazirmatn,
+} from "next/font/google";
 import "./globals.css";
 
-const dynaPuff = DynaPuff({
-  variable: "--font-dyna-puff",
+const manrope = Manrope({
+  variable: "--font-manrope",
   subsets: ["latin"],
-  weight: ["400", "500", "700"],
 });
 const vazirmatn = Vazirmatn({
   variable: "--font-vazir-matn",
-  subsets: ["latin", "arabic"],
+  subsets: ["latin"],
 });
 
 export const metadata: Metadata = {
@@ -20,8 +25,8 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
-      lang="fa"
-      className={`${vazirmatn.variable} ${dynaPuff.variable} h-full antialiased vazir-matn`}
+      lang="en"
+      className={`${vazirmatn.variable} ${manrope.variable} h-full antialiased manrope`}
       dir="rtl"
     >
       <body className="min-h-full flex flex-col">{children}</body>

@@ -12,9 +12,9 @@ export default function Home() {
           >
             <Logo size="large" subtitle title />
           </div>
-          <div className="flex flex-col items-center mb-10 animate-in fade-in duration-300">
-            <p className="mb-1">سوالات بهتر.</p>
-            <p className="mb-12 text-foreground">توصیه های مطمئن.</p>
+          <div className="flex flex-col items-center mb-8 animate-in fade-in duration-300">
+            <p className="mb-1">Better Questions</p>
+            <p className="mb-12 text-foreground">Better Suggestions</p>
             <p className="text-muted-foreground" dir="ltr">
               © 2026 PharmaShiva. All rights reserved.
             </p>
