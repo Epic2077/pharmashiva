@@ -31,22 +31,24 @@ export default function Logo({
     <div
       id="logo"
       aria-label="Logo"
-      className={cn("flex flex-col items-center", className)}
+      className={cn("flex flex-col items-center gap-4", className)}
     >
       <Image src="/logo/logo.svg" alt="Logo" width={width} height={height} />
-      {title && (
-        <h1
-          className={`w-max text-primary to-90% ${titleSize} font-bold mt-4`}
-          dir="ltr"
-        >
-          PharmaShiva
-        </h1>
-      )}
-      {subtitle && (
-        <p className={`text-primary ${subtitleSize} mt-0.5 text-bold`}>
-          Your Pharmacy AI Assistant
-        </p>
-      )}
+      <div className="flex flex-col items-center gap-0.5">
+        {title && (
+          <h1
+            className={`w-max text-primary to-90% ${titleSize} font-bold`}
+            dir="ltr"
+          >
+            PharmaShiva
+          </h1>
+        )}
+        {subtitle && (
+          <p className={`text-primary ${subtitleSize} text-bold`}>
+            Your Pharmacy AI Assistant
+          </p>
+        )}
+      </div>
     </div>
   );
 }

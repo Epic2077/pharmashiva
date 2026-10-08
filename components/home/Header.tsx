@@ -12,7 +12,7 @@ export default function HomeHeader({ isLoggedIn, user }: HomeHeaderProps) {
     <header className="flex flex-row justify-between items-center w-full  py-4 bg-transparent">
       <Logo
         size="medium"
-        className="flex flex-row! gap-4 items-center-safe"
+        className="flex flex-row! gap-4 items-center justify-center"
         title
       />
       {isLoggedIn ? (

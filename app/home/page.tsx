@@ -1,6 +1,5 @@
 import HomeHeader from "@/components/home/Header";
 import HomeNavigation from "@/components/home/Navigation";
-import NavMenu from "@/components/shared/nav-menu/NavMenu";
 
 export default function HomePage() {
   const time =
@@ -21,7 +20,6 @@ export default function HomePage() {
         </span>
       </h2>
       <HomeNavigation />
-      <NavMenu />
     </div>
   );
 }
