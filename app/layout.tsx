@@ -27,7 +27,6 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     <html
       lang="en"
       className={`${vazirmatn.variable} ${manrope.variable} h-full antialiased manrope`}
-      dir="rtl"
     >
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
