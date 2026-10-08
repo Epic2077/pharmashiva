@@ -35,13 +35,16 @@ export default function Logo({
     >
       <Image src="/logo/logo.svg" alt="Logo" width={width} height={height} />
       {title && (
-        <h1 className={`text-primary ${titleSize} font-bold mt-4`} dir="ltr">
+        <h1
+          className={`w-max text-primary to-90% ${titleSize} font-bold mt-4`}
+          dir="ltr"
+        >
           PharmaShiva
         </h1>
       )}
       {subtitle && (
         <p className={`text-primary ${subtitleSize} mt-0.5 text-bold`}>
-          دستیار هوشمند داروخانه
+          Your Pharmacy AI Assistant
         </p>
       )}
     </div>
