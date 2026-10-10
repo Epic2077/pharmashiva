@@ -19,7 +19,7 @@ export function NewChatIntro() {
       <div className="flex items-center gap-4 bg-accent rounded-lg w-full p-6">
         <Logo
           size="medium"
-          className="flex flex-row gap-4 items-center justify-center w-20 h-10"
+          className="flex flex-row gap-4 items-center justify-center w-20 h-10 "
         />
         <p className="text-accent-foreground text-sm font-medium">
           Hi, I&apos;m your AI assistant, ask anything about supplements,

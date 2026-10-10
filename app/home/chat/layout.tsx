@@ -16,7 +16,9 @@ export default function ChatLayout({ children }: LayoutProps<"/home/chat">) {
     <div className="flex h-full flex-col">
       <ChatHeader
         title={chat?.title ?? "New Consultation"}
-        subtitle={chat ? "Consultation in progress" : "Start a new patient case"}
+        subtitle={
+          chat ? "Consultation in progress" : "Start a new patient case"
+        }
       />
 
       <main className="min-h-0 flex-1 overflow-hidden">{children}</main>

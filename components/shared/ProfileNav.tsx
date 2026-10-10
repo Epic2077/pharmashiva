@@ -17,6 +17,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
+import { Avatar, AvatarFallback, AvatarImage } from "../ui/avatar";
 
 interface ProfileNavProps {
   isLoggedIn: boolean;
@@ -33,7 +34,12 @@ export default function ProfileNav({ isLoggedIn = false }: ProfileNavProps) {
         aria-label="Account menu"
         className="flex size-10 shrink-0 items-center justify-center rounded-full bg-muted mt-1.5 outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
       >
-        <FaUserAlt className="size-6 text-primary" />
+        <Avatar>
+          <AvatarImage />
+          <AvatarFallback>
+            <FaUserAlt className="size-4 text-primary" />
+          </AvatarFallback>
+        </Avatar>
       </DropdownMenuTrigger>
       {isLoggedIn ? (
         <DropdownMenuContent className="w-56 flex flex-col gap-2">
