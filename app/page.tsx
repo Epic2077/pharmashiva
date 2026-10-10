@@ -104,13 +104,13 @@ export default function Home() {
               Better Suggestions
             </motion.p>
             <motion.a
-              href="/home"
+              href="/home/chat"
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.3, delay: 0.3 }}
               className="px-6 py-3 bg-primary text-primary-foreground rounded-lg font-medium hover:opacity-90 transition-opacity"
             >
-              Let&apos;s Go
+              Start Chatting
             </motion.a>
             <motion.p
               initial={{ opacity: 0 }}

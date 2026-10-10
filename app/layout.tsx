@@ -1,19 +1,13 @@
 import type { Metadata } from "next";
-import {
-  DynaPuff,
-  Geist,
-  Geist_Mono,
-  Manrope,
-  Vazirmatn,
-} from "next/font/google";
+import { Manrope, Roboto } from "next/font/google";
 import "./globals.css";
 
 const manrope = Manrope({
   variable: "--font-manrope",
   subsets: ["latin"],
 });
-const vazirmatn = Vazirmatn({
-  variable: "--font-vazir-matn",
+const roboto = Roboto({
+  variable: "--font-roboto",
   subsets: ["latin"],
 });
 
@@ -26,7 +20,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
-      className={`${vazirmatn.variable} ${manrope.variable} h-full antialiased manrope`}
+      className={`${roboto.variable} ${manrope.variable} h-full antialiased roboto`}
     >
       <body className="min-h-full flex flex-col">{children}</body>
     </html>

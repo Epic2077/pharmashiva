@@ -7,7 +7,7 @@ export default function HomeNavigation() {
       id: "new-consultation",
       name: "New Consultation",
       sub: "Start a new patient case",
-      href: "/chat",
+      href: "/home/chat",
       icon: <MessageCircle className="w-6 h-6 text-background size-0" />,
     },
     {
