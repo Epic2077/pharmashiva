@@ -5,7 +5,7 @@ interface logoProps {
   size?: "small" | "medium" | "large";
   title?: boolean;
   subtitle?: boolean;
-  className?: string;
+  className?: React.ComponentProps<"div">["className"];
 }
 
 export default function Logo({
@@ -16,7 +16,7 @@ export default function Logo({
 }: logoProps) {
   const { width, height } =
     size === "small"
-      ? { width: 45, height: 48 }
+      ? { width: 50, height: 53 }
       : size === "medium"
         ? { width: 55, height: 58 }
         : { width: 151, height: 157 };
@@ -31,21 +31,25 @@ export default function Logo({
     <div
       id="logo"
       aria-label="Logo"
-      className={cn("flex flex-col items-center", className)}
+      className={cn("flex flex-col items-center gap-4", className)}
     >
       <Image src="/logo/logo.svg" alt="Logo" width={width} height={height} />
-      {title && (
-        <h1
-          className={`w-max text-primary to-90% ${titleSize} font-bold mt-4`}
-          dir="ltr"
-        >
-          PharmaShiva
-        </h1>
-      )}
-      {subtitle && (
-        <p className={`text-primary ${subtitleSize} mt-0.5 text-bold`}>
-          Your Pharmacy AI Assistant
-        </p>
+      {(title || subtitle) && (
+        <div className="flex flex-col items-center gap-0.5">
+          {title && (
+            <h1
+              className={`w-max text-primary to-90% ${titleSize} font-bold`}
+              dir="ltr"
+            >
+              PharmaShiva
+            </h1>
+          )}
+          {subtitle && (
+            <p className={`text-primary ${subtitleSize} text-bold`}>
+              Your Pharmacy AI Assistant
+            </p>
+          )}
+        </div>
       )}
     </div>
   );

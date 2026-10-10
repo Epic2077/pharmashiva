@@ -189,15 +189,31 @@
    FONTS
    ========================================================= */
 
-.font-dyna {
-  font-family: var(--font-dyna-puff), var(--font-vazir-matn), sans-serif;
-}
-
-.vazir-matn {
-  font-family: var(--font-vazir-matn);
-}
 .manrope {
   font-family: var(--font-manrope);
+}
+.roboto {
+  font-family: var(--font-roboto);
+}
+
+/* ANIMATIONS */
+
+.floating-component {
+  display: inline-block;
+  /* Calls the 'hover-float' animation below */
+  animation: hover-float 3s ease-in-out infinite;
+}
+
+@keyframes hover-float {
+  0% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-8px); /* Peak height of the float */
+  }
+  100% {
+    transform: translateY(0px); /* Returns back to start */
+  }
 }
 
 /* =========================================================
