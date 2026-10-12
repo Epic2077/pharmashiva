@@ -14,11 +14,6 @@ import { FaHome } from "react-icons/fa";
 
 export default function NavMenu() {
   const [active, setActive] = useState("Home");
-<<<<<<< Updated upstream
-  const [showMore, setShowMore] = useState(false);
-  const moreRef = useRef<HTMLDivElement>(null);
-=======
->>>>>>> Stashed changes
 
   const iconClass = `w-6 h-6 ${active === "Home" ? "text-primary" : "text-foreground"}`;
   const navMenuItems = [
