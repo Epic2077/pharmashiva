@@ -9,13 +9,16 @@ import {
   History,
 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { FaHome } from "react-icons/fa";
 
 export default function NavMenu() {
   const [active, setActive] = useState("Home");
+<<<<<<< Updated upstream
   const [showMore, setShowMore] = useState(false);
   const moreRef = useRef<HTMLDivElement>(null);
+=======
+>>>>>>> Stashed changes
 
   const iconClass = `w-6 h-6 ${active === "Home" ? "text-primary" : "text-foreground"}`;
   const navMenuItems = [
@@ -68,7 +71,9 @@ export default function NavMenu() {
   ];
 
   return (
-    <div className="fixed bottom-0 left-0 w-full bg-background border-t border-border py-4">
+    // In normal flow inside the home layout's column, so it reserves its own
+    // space instead of covering whatever is underneath it.
+    <div className="w-full shrink-0 bg-background border-t border-border py-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
       <div className="flex justify-around items-center">
         {navMenuItems.map((item) => (
           <Link

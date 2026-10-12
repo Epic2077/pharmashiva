@@ -15,21 +15,21 @@ export default function HomeNavigation() {
       name: "recent cases",
       sub: "View your past consultations",
       href: "/history",
-      icon: <History className="w-6 size-0 h-6 size-0 text-foreground" />,
+      icon: <History className="w-6 size-0 h-6 text-foreground" />,
     },
     {
       id: "product-search",
       name: "Product Search",
       sub: "Search supplimentts directly",
       href: "/products",
-      icon: <Package className="w-6 size-0 h-6 size-0 text-foreground" />,
+      icon: <Package className="w-6 size-0 h-6 text-foreground" />,
     },
     {
       id: "settings",
       name: "Settings",
       sub: "App & account preferences",
       href: "/settings",
-      icon: <Settings className="w-6 size-0 h-6 size-0 text-foreground" />,
+      icon: <Settings className="w-6 size-0 h-6 text-foreground" />,
     },
   ];
 
