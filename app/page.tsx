@@ -20,11 +20,11 @@ export default function Home() {
 
   if (!loadingComplete) {
     return (
-      <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
+      <div className="max-h-screen flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
         <main className="flex w-full items-center justify-between bg-[url('/background.png')] bg-cover bg-no-repeat dark:bg-black sm:items-start">
           <div className="h-screen w-screen bg-muted-foreground/20 flex flex-col justify-between items-center">
             <div
-              className="flex flex-col items-center mt-52"
+              className="flex flex-col items-center mt-40"
               id="logo"
               aria-label="Logo"
             >
@@ -65,11 +65,11 @@ export default function Home() {
   }
 
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
+    <div className="max-h-screen flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
       <main className="flex w-full items-center justify-between bg-[url('/background.png')] bg-cover bg-no-repeat dark:bg-black sm:items-start">
         <div className="h-screen w-screen bg-muted-foreground/20 flex flex-col justify-between items-center">
           <div
-            className="flex flex-col items-center mt-52"
+            className="flex flex-col items-center mt-40"
             id="logo"
             aria-label="Logo"
           >

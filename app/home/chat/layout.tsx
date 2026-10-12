@@ -23,7 +23,7 @@ export default function ChatLayout({ children }: LayoutProps<"/home/chat">) {
 
       <main className="min-h-0 flex-1 overflow-hidden">{children}</main>
 
-      <footer className="shrink-0 pb-24 pt-2">
+      <footer className="shrink-0 pt-2">
         <ChatComposer
           placeholder={
             chat ? "Reply to Shiva..." : "Describe the patient case..."
