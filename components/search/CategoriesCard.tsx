@@ -1,16 +1,16 @@
-import { ChevronRightIcon } from "lucide-react";
-import Image from "next/image";
+import { ChevronRight } from "lucide-react";
 import Link from "next/link";
+import type { ReactElement } from "react";
 
 interface CategoriesCardProps {
-  image: string;
+  icon: ReactElement;
   title: string;
   count: number;
   href: string;
 }
 
 export default function CategoriesCard({
-  image,
+  icon,
   title,
   count,
   href,
@@ -18,26 +18,18 @@ export default function CategoriesCard({
   return (
     <Link
       href={href}
-      className="flex items-center justify-between border-b w-full h-16 py-4"
+      className="group flex items-center gap-4 rounded-2xl border bg-card p-4 shadow-sm transition-all motion-reduce:transition-none hover:border-primary/40 hover:bg-muted/30 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
     >
-      <div className="flex gap-4">
-        <div className="bg-secondary w-10 h-10 rounded-lg flex items-center justify-center">
-          <Image
-            src={image}
-            alt={title}
-            width={40}
-            height={40}
-            className="rounded-lg"
-          />
-        </div>
-        <div>
-          <h3 className="font-semibold">{title}</h3>
-          <p className="text-sm text-muted-foreground">{count} Products</p>
-        </div>
-      </div>
-      <div className="flex items-center gap-2">
-        <ChevronRightIcon className="text-sm text-muted-foreground" />
-      </div>
+      <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+        {icon}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-base font-semibold">{title}</span>
+        <span className="block text-sm text-muted-foreground">
+          {count} products
+        </span>
+      </span>
+      <ChevronRight className="size-5 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 motion-reduce:transition-none" />
     </Link>
   );
 }

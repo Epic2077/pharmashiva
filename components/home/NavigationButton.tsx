@@ -1,14 +1,14 @@
-"use client";
-
+import Link from "next/link";
 import { ChevronRight } from "lucide-react";
-import { Button } from "../ui/button";
+import type { ReactNode } from "react";
+import { cn } from "@/lib/utils";
 
 interface NavigationButtonProps {
   id: string;
   name: string;
   sub: string;
   href: string;
-  icon: React.ReactNode;
+  icon: ReactNode;
 }
 
 export default function NavigationButton({
@@ -16,30 +16,56 @@ export default function NavigationButton({
 }: {
   item: NavigationButtonProps;
 }) {
+  const featured = item.id === "new-consultation";
+
   return (
-    <Button
-      className={`flex items-center justify-between shadow-xl w-full h-24 px-4 py-2 rounded-lg ${item.id === "new-consultation" ? "bg-[url('/texture/texture-green.png')] hover:bg-[url('/texture/texture-green.png')]/80 bg-center" : "bg-card hover:bg-card/80"} transition-colors duration-200`}
-      key={item.id}
-      onClick={() => (window.location.href = item.href)}
+    <Link
+      href={item.href}
+      className={cn(
+        "group flex items-center justify-between gap-4 rounded-2xl p-5 transition-all motion-reduce:transition-none",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+        "active:scale-[0.99]",
+        featured
+          ? "bg-[url('/texture/texture-green.png')] bg-cover bg-center shadow-lg"
+          : "border bg-card shadow-sm hover:border-primary/40 hover:bg-muted/30",
+      )}
     >
-      <div className="flex items-center gap-6 w-10 h-10">
-        {item.icon}
-        <div className="flex flex-col  items-start">
+      <div className="flex min-w-0 items-center gap-4">
+        <span
+          className={cn(
+            "flex size-12 shrink-0 items-center justify-center rounded-xl",
+            featured
+              ? "bg-white/10 text-white ring-1 ring-white/25"
+              : "bg-primary/10 text-primary",
+          )}
+        >
+          {item.icon}
+        </span>
+        <div className="min-w-0">
           <h3
-            className={`font-medium text-2xl ${item.id === "new-consultation" ? "text-background" : "text-foreground"}`}
+            className={cn(
+              "truncate text-lg font-bold",
+              featured ? "text-white" : "text-foreground",
+            )}
           >
             {item.name}
           </h3>
           <p
-            className={`text-sm ${item.id === "new-consultation" ? "text-muted" : "text-muted-foreground"}`}
+            className={cn(
+              "truncate text-sm",
+              featured ? "text-white/70" : "text-muted-foreground",
+            )}
           >
             {item.sub}
           </p>
         </div>
       </div>
       <ChevronRight
-        className={`w-6 h-6 size-0 ${item.id === "new-consultation" ? "text-background" : "text-muted-foreground"}`}
+        className={cn(
+          "size-5 shrink-0 transition-transform group-hover:translate-x-0.5 motion-reduce:transition-none",
+          featured ? "text-white/70" : "text-muted-foreground",
+        )}
       />
-    </Button>
+    </Link>
   );
 }

@@ -13,7 +13,7 @@ export default function HomeHeader({
   user,
 }: HomeHeaderProps) {
   return (
-    <header className="flex flex-row justify-between items-center w-full  py-4 bg-transparent">
+    <header className="flex flex-row justify-between items-center w-full  pt-4 bg-transparent">
       <Logo
         size="medium"
         className="flex flex-row! gap-4 items-center justify-center"

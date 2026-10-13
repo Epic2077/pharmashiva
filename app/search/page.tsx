@@ -5,8 +5,12 @@ import Title from "@/components/shared/Title";
 
 export default function SearchPage() {
   return (
-    <div className="min-h-screen flex flex-col gap-8 mt-2">
-      <Title title="Search Products" />
+    <div className="flex flex-col gap-8 pt-2">
+      <Title
+        title="Search Products"
+        subtitle="Find medicines & supplements"
+        profile
+      />
       <SearchBar />
       <PopularSearch />
       <CategoriesSearch />

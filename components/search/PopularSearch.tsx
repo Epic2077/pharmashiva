@@ -1,4 +1,4 @@
-import { Badge } from "../ui/badge";
+import { TrendingUp } from "lucide-react";
 
 export default function PopularSearch() {
   const popularSearches = [
@@ -11,16 +11,19 @@ export default function PopularSearch() {
   ];
   return (
     <div className="flex flex-col gap-4">
-      <h3 className="text-lg font-semibold">Popular Searches</h3>
-      <div className="flex flex-wrap gap-3 ">
+      <div className="flex items-center gap-2 px-1">
+        <TrendingUp className="size-4 text-primary" />
+        <h3 className="text-base font-semibold">Popular Searches</h3>
+      </div>
+      <div className="flex flex-wrap gap-2.5">
         {popularSearches.map((search) => (
-          <Badge
+          <button
             key={search}
-            variant="secondary"
-            className="cursor-pointer py-4.5 px-4"
+            type="button"
+            className="rounded-full border border-border bg-card px-4 py-2 text-sm font-medium text-foreground transition-colors hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
           >
             {search}
-          </Badge>
+          </button>
         ))}
       </div>
     </div>

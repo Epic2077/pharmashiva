@@ -129,6 +129,9 @@
    ========================================================= */
 
 .dark {
+  /* Render native widgets (scrollbars, form controls) for the dark UI too. */
+  color-scheme: dark;
+
   /* Core */
   --background: #101a1a;
   --foreground: #edf7f5;

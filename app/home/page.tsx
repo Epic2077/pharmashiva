@@ -5,14 +5,16 @@ import { greeting } from "@/lib/greeting";
 export default function HomePage() {
   const name = "Shiva"; //Mock data
   return (
-    <div>
+    <div className="flex flex-col gap-6">
       <HomeHeader isLoggedIn={false} user={() => {}} />
-      <h2 className="text-4xl font-bold mt-6">
-        {greeting()},<span className="block">{name}👋</span>
-        <span className="block text-muted-foreground mt-2 text-sm">
+      <section className="flex flex-col gap-1.5">
+        <h2 className="text-3xl font-bold leading-tight">
+          {greeting()}, {name}
+        </h2>
+        <p className="text-sm text-muted-foreground">
           How can I help you today?
-        </span>
-      </h2>
+        </p>
+      </section>
       <HomeNavigation />
     </div>
   );
