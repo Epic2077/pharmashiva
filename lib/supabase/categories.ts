@@ -1,5 +1,10 @@
 import { getSupabaseClient } from "./server";
-import type { Category, CategoryNode, CategoryWithCount } from "@/types/database";
+import { fetchAllRows } from "./paginate";
+import type {
+  Category,
+  CategoryNode,
+  CategoryWithCount,
+} from "@/types/database";
 
 /**
  * Category data access.
@@ -55,6 +60,22 @@ export async function getSubcategories(parentId: string): Promise<Category[]> {
     .select("*")
     .eq("parent_id", parentId)
     .order("name", { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as Category[];
+}
+
+/** Case-insensitive category name search (stored names are Persian). */
+export async function searchCategories(
+  query: string,
+  limit = 24,
+): Promise<Category[]> {
+  const sb = getSupabaseClient();
+  const { data, error } = await sb
+    .from("categories")
+    .select("*")
+    .ilike("name", `%${query}%`)
+    .order("name", { ascending: true })
+    .limit(limit);
   if (error) throw new Error(error.message);
   return (data ?? []) as Category[];
 }
@@ -119,16 +140,42 @@ export async function getCategorySubtreeIds(
   return ids;
 }
 
-/** Top-level categories, each with the number of products in its subtree. */
-export async function getTopLevelCategoriesWithProductCounts(
+/** Ancestor chain for a category, ordered root → leaf (inclusive). */
+export async function getCategoryAncestors(
+  categoryId: string,
+): Promise<Category[]> {
+  const categories = await getAllCategories();
+  const byId = new Map(categories.map((category) => [category.id, category]));
+
+  const chain: Category[] = [];
+  const seen = new Set<string>();
+  let current = byId.get(categoryId);
+  while (current && !seen.has(current.id)) {
+    seen.add(current.id);
+    chain.push(current);
+    current = current.parent_id ? byId.get(current.parent_id) : undefined;
+  }
+  return chain.reverse();
+}
+
+/**
+ * Direct children of a category (or top-level categories when `parentId` is
+ * `null`), each with the number of products in its subtree.
+ */
+export async function getChildCategoriesWithProductCounts(
+  parentId: string | null,
   sourceId?: string,
 ): Promise<CategoryWithCount[]> {
   const categories = await getAllCategories(sourceId);
-  const topLevel = categories.filter((category) => category.parent_id === null);
-  if (topLevel.length === 0) return [];
+  const children = categories.filter((category) =>
+    parentId === null
+      ? category.parent_id === null
+      : category.parent_id === parentId,
+  );
+  if (children.length === 0) return [];
 
-  // Map every category to its root ancestor so product links can be
-  // attributed to a top-level category in a single pass.
+  // Map every category to the direct child it rolls up into, so product links
+  // can be attributed to a child in a single pass.
   const childrenByParent = new Map<string, string[]>();
   for (const category of categories) {
     if (!category.parent_id) continue;
@@ -137,36 +184,47 @@ export async function getTopLevelCategoriesWithProductCounts(
     childrenByParent.set(category.parent_id, siblings);
   }
 
-  const rootByCategory = new Map<string, string>();
-  for (const root of topLevel) {
-    const stack = [root.id];
+  const childByCategory = new Map<string, string>();
+  for (const child of children) {
+    const stack = [child.id];
     while (stack.length > 0) {
       const current = stack.pop()!;
-      rootByCategory.set(current, root.id);
-      for (const child of childrenByParent.get(current) ?? []) stack.push(child);
+      childByCategory.set(current, child.id);
+      for (const descendant of childrenByParent.get(current) ?? []) {
+        stack.push(descendant);
+      }
     }
   }
 
   const sb = getSupabaseClient();
-  const { data: links, error } = await sb
-    .from("product_categories")
-    .select("product_id, category_id");
-  if (error) throw new Error(error.message);
-
-  const productIdsByRoot = new Map<string, Set<string>>();
-  for (const link of (links ?? []) as Array<{
+  const links = await fetchAllRows<{
     product_id: string;
     category_id: string;
-  }>) {
-    const rootId = rootByCategory.get(link.category_id);
-    if (!rootId) continue;
-    const productIds = productIdsByRoot.get(rootId) ?? new Set<string>();
+  }>((from, to) =>
+    sb
+      .from("product_categories")
+      .select("product_id, category_id")
+      .range(from, to),
+  );
+
+  const productIdsByChild = new Map<string, Set<string>>();
+  for (const link of links) {
+    const childId = childByCategory.get(link.category_id);
+    if (!childId) continue;
+    const productIds = productIdsByChild.get(childId) ?? new Set<string>();
     productIds.add(link.product_id);
-    productIdsByRoot.set(rootId, productIds);
+    productIdsByChild.set(childId, productIds);
   }
 
-  return topLevel.map((category) => ({
+  return children.map((category) => ({
     ...category,
-    productCount: productIdsByRoot.get(category.id)?.size ?? 0,
+    productCount: productIdsByChild.get(category.id)?.size ?? 0,
   }));
+}
+
+/** Top-level categories, each with the number of products in its subtree. */
+export async function getTopLevelCategoriesWithProductCounts(
+  sourceId?: string,
+): Promise<CategoryWithCount[]> {
+  return getChildCategoriesWithProductCounts(null, sourceId);
 }

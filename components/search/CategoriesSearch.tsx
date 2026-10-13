@@ -9,10 +9,16 @@ import {
   Soup,
 } from "lucide-react";
 import CategoriesCard from "./CategoriesCard";
-import type { CategoryWithCount } from "@/types/database";
+import Link from "next/link";
+
+interface CategoryItem {
+  id: string;
+  title: string;
+  count: number;
+}
 
 interface CategoriesSearchProps {
-  categories: CategoryWithCount[];
+  categories: CategoryItem[];
 }
 
 function iconFor(name: string): ReactElement {
@@ -26,22 +32,32 @@ function iconFor(name: string): ReactElement {
   return <Pill className="size-5" />;
 }
 
-export default function CategoriesSearch({ categories }: CategoriesSearchProps) {
+export default function CategoriesSearch({
+  categories,
+}: CategoriesSearchProps) {
   if (categories.length === 0) return null;
 
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center gap-2 px-1">
         <LayoutGrid className="size-4 text-primary" />
-        <h3 className="text-base font-semibold">Categories</h3>
+        <div className="flex items-center justify-between w-full">
+          <h3 className="text-base font-semibold">Categories</h3>
+          <Link
+            href="/categories"
+            className="text-sm font-medium text-primary text-end transition-colors hover:text-primary/80"
+          >
+            View All
+          </Link>
+        </div>
       </div>
       {categories.map((category) => (
         <CategoriesCard
           key={category.id}
-          icon={iconFor(category.name)}
-          title={category.name}
-          count={category.productCount}
-          href={`/search?category=${category.id}`}
+          icon={iconFor(category.title)}
+          title={category.title}
+          count={category.count}
+          href={`/categories/${category.id}`}
         />
       ))}
     </div>

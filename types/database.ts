@@ -56,6 +56,8 @@ export interface Category {
   source_url: string | null;
   /** Path from root to this category, e.g. `["داروخانه", "مکمل"]`. */
   breadcrumbs: string[] | null;
+  created_at: string;
+  updated_at: string;
 }
 
 /** Normalized availability tokens: `InStock`, `OutOfStock`, `PreOrder`, … */
@@ -89,6 +91,8 @@ export interface Product {
   source_payload: Json | null;
   created_at: string;
   updated_at: string;
+  /** Generated full-text search column (Postgres `tsvector`). */
+  search_vector?: string | null;
 }
 
 export interface Ingredient {
@@ -100,6 +104,8 @@ export interface Ingredient {
   ingredient_type: string | null;
   description: string | null;
   metadata: Json | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface ProductIngredient {
@@ -168,5 +174,5 @@ export interface CategoryWithCount extends Category {
 /** A search hit pairing the RPC rank with the full product row. */
 export interface ProductSearchHit {
   rank: number;
-  product: Product;
+  product: ProductDetails;
 }

@@ -1,11 +1,30 @@
-import type { Product } from "@/types/database";
+import ProductCardList from "@/components/products/ProductCardList";
+import { localizeCategoryName } from "@/lib/i18n-server";
+import type { ProductDetails } from "@/types/database";
+import type { LanguageCode } from "@/lib/i18n";
 
 interface SearchResultsProps {
   heading: string;
-  products: Product[];
+  products: ProductDetails[];
+  language: LanguageCode;
 }
 
-export default function SearchResults({ heading, products }: SearchResultsProps) {
+export default async function SearchResults({
+  heading,
+  products,
+  language,
+}: SearchResultsProps) {
+  // Precompute the localized category name per product on the server, so the
+  // cards stay compact client components.
+  const items = await Promise.all(
+    products.map(async (product) => ({
+      product,
+      categoryName: product.categories[0]
+        ? await localizeCategoryName(product.categories[0], language)
+        : null,
+    })),
+  );
+
   return (
     <div className="flex flex-col gap-4">
       <h2 className="px-1 text-base font-semibold">
@@ -21,52 +40,7 @@ export default function SearchResults({ heading, products }: SearchResultsProps)
           No products found.
         </p>
       ) : (
-        <ul className="flex flex-col gap-3">
-          {products.map((product) => (
-            <li
-              key={product.id}
-              className="flex flex-col gap-2 rounded-2xl border bg-card p-4 shadow-sm"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="truncate text-base font-semibold">{product.name}</p>
-                  {product.name_en && product.name_en !== product.name ? (
-                    <p className="truncate text-sm text-muted-foreground">
-                      {product.name_en}
-                    </p>
-                  ) : null}
-                  {product.brand ? (
-                    <p className="text-xs text-muted-foreground">{product.brand}</p>
-                  ) : null}
-                </div>
-                {product.price != null ? (
-                  <p className="shrink-0 text-sm font-semibold">
-                    {product.price.toLocaleString()}
-                    {product.currency ? (
-                      <span className="text-xs font-normal text-muted-foreground">
-                        {" "}
-                        {product.currency}
-                      </span>
-                    ) : null}
-                  </p>
-                ) : null}
-              </div>
-
-              <div className="flex flex-wrap gap-1.5">
-                {[product.form, product.package_size, product.availability]
-                  .filter(Boolean)
-                  .map((tag) => (
-                    <span
-                      key={tag}
-                      className="rounded-full bg-muted px-2.5 py-1 text-[11px] font-medium text-muted-foreground"
-                    >
-                      {tag}
-                    </span>
-                  ))}
-              </div>
-            </li>
-          ))}
-        </ul>
+        <ProductCardList items={items} language={language} />
       )}
     </div>
   );

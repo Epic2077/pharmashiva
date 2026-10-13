@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Search } from "lucide-react";
 import {
   InputGroup,
@@ -11,21 +11,49 @@ import {
 import { Badge } from "../ui/badge";
 
 interface SearchBarProps {
-  defaultValue?: string;
   resultCount?: number;
 }
 
-export default function SearchBar({
-  defaultValue = "",
-  resultCount,
-}: SearchBarProps) {
+const DEBOUNCE_MS = 250;
+
+export default function SearchBar({ resultCount }: SearchBarProps) {
   const router = useRouter();
-  const [value, setValue] = useState(defaultValue);
+  const searchParams = useSearchParams();
+  const query = searchParams.get("q") ?? "";
+
+  const [value, setValue] = useState(query);
+  const [prevQuery, setPrevQuery] = useState(query);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Keep the input in sync when the URL changes externally (popular chips).
+  // Adjusting state during render avoids an extra effect render.
+  if (query !== prevQuery) {
+    setPrevQuery(query);
+    setValue(query);
+  }
+
+  useEffect(
+    () => () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    },
+    [],
+  );
+
+  function navigate(next: string) {
+    const q = next.trim();
+    router.replace(q ? `/search?q=${encodeURIComponent(q)}` : "/search");
+  }
+
+  function handleChange(next: string) {
+    setValue(next);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => navigate(next), DEBOUNCE_MS);
+  }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const query = value.trim();
-    router.push(query ? `/search?q=${encodeURIComponent(query)}` : "/search");
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    navigate(value);
   }
 
   return (
@@ -38,7 +66,7 @@ export default function SearchBar({
           name="q"
           placeholder="Search medicines & supplements…"
           value={value}
-          onChange={(event) => setValue(event.target.value)}
+          onChange={(event) => handleChange(event.target.value)}
         />
       </InputGroup>
       {resultCount !== undefined && resultCount > 0 ? (

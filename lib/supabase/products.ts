@@ -1,5 +1,6 @@
 import { getSupabaseClient } from "./server";
 import { getCategorySubtreeIds } from "./categories";
+import { fetchAllRows, fetchByIn, IN_CHUNK } from "./paginate";
 import type {
   CategoryRef,
   IngredientRef,
@@ -57,6 +58,29 @@ function mapProductDetails(row: ProductDetailsRow): ProductDetails {
   ) as unknown as Product;
 
   return { ...product, ingredients, categories };
+}
+
+/** Fetch full product rows (with ingredients + categories) by id. */
+async function fetchProductDetails(
+  ids: string[],
+  limit?: number,
+): Promise<ProductDetails[]> {
+  if (ids.length === 0) return [];
+  const sb = getSupabaseClient();
+  const rows: ProductDetailsRow[] = [];
+  for (let i = 0; i < ids.length; i += IN_CHUNK) {
+    if (limit !== undefined && rows.length >= limit) break;
+    const chunk = ids.slice(i, i + IN_CHUNK);
+    let query = sb
+      .from("products")
+      .select(PRODUCT_DETAILS_SELECT)
+      .in("id", chunk);
+    if (limit !== undefined) query = query.limit(limit - rows.length);
+    const { data, error } = await query;
+    if (error) throw new Error(error.message);
+    rows.push(...((data ?? []) as unknown as ProductDetailsRow[]));
+  }
+  return rows.map(mapProductDetails);
 }
 
 /** Ranked + fuzzy product search via the `search_products` RPC. */
@@ -121,76 +145,66 @@ export interface GetProductsByCategoryOptions {
 export async function getProductsByCategory(
   categoryId: string,
   options: GetProductsByCategoryOptions = {},
-): Promise<Product[]> {
+): Promise<ProductDetails[]> {
   const { limit = 50, includeSubcategories = true } = options;
   const categoryIds = includeSubcategories
     ? await getCategorySubtreeIds(categoryId)
     : [categoryId];
 
   const sb = getSupabaseClient();
-  const { data: links, error: linkError } = await sb
-    .from("product_categories")
-    .select("product_id")
-    .in("category_id", categoryIds);
-  if (linkError) throw new Error(linkError.message);
-
-  const productIds = Array.from(
-    new Set((links ?? []).map((link) => link.product_id)),
+  const links = await fetchByIn<{ product_id: string }>(
+    categoryIds,
+    (chunk, from, to) =>
+      sb
+        .from("product_categories")
+        .select("product_id")
+        .in("category_id", chunk)
+        .range(from, to),
   );
-  if (productIds.length === 0) return [];
 
-  const { data, error } = await sb
-    .from("products")
-    .select("*")
-    .in("id", productIds)
-    .limit(limit);
-  if (error) throw new Error(error.message);
-  return (data ?? []) as Product[];
+  const productIds = Array.from(new Set(links.map((link) => link.product_id)));
+  return fetchProductDetails(productIds, limit);
 }
 
 export async function getProductsByIngredient(
   ingredient: string,
   limit = 50,
-): Promise<Product[]> {
+): Promise<ProductDetails[]> {
   const sb = getSupabaseClient();
   const pattern = `%${ingredient}%`;
 
   // 1. Matching ingredient ids (English or Persian).
-  const { data: ingredients, error: ingredientError } = await sb
-    .from("ingredients")
-    .select("id")
-    .or(`canonical_name.ilike.${pattern},persian_name.ilike.${pattern}`);
-  if (ingredientError) throw new Error(ingredientError.message);
-  const ingredientIds = (ingredients ?? []).map((row) => row.id);
+  const ingredients = await fetchAllRows<{ id: string }>((from, to) =>
+    sb
+      .from("ingredients")
+      .select("id")
+      .or(`canonical_name.ilike.${pattern},persian_name.ilike.${pattern}`)
+      .range(from, to),
+  );
+  const ingredientIds = ingredients.map((row) => row.id);
   if (ingredientIds.length === 0) return [];
 
   // 2. Products linked to those ingredients.
-  const { data: links, error: linkError } = await sb
-    .from("product_ingredients")
-    .select("product_id")
-    .in("ingredient_id", ingredientIds);
-  if (linkError) throw new Error(linkError.message);
-  const productIds = Array.from(
-    new Set((links ?? []).map((link) => link.product_id)),
+  const links = await fetchByIn<{ product_id: string }>(
+    ingredientIds,
+    (chunk, from, to) =>
+      sb
+        .from("product_ingredients")
+        .select("product_id")
+        .in("ingredient_id", chunk)
+        .range(from, to),
   );
+  const productIds = Array.from(new Set(links.map((link) => link.product_id)));
   if (productIds.length === 0) return [];
 
   // 3. Fetch the products.
-  const { data, error } = await sb
-    .from("products")
-    .select("*")
-    .in("id", productIds)
-    .limit(limit);
-  if (error) throw new Error(error.message);
-  return (data ?? []) as Product[];
+  return fetchProductDetails(productIds, limit);
 }
 
-export async function getProductsByIds(ids: string[]): Promise<Product[]> {
-  if (ids.length === 0) return [];
-  const sb = getSupabaseClient();
-  const { data, error } = await sb.from("products").select("*").in("id", ids);
-  if (error) throw new Error(error.message);
-  return (data ?? []) as Product[];
+export async function getProductsByIds(
+  ids: string[],
+): Promise<ProductDetails[]> {
+  return fetchProductDetails(ids);
 }
 
 /**
@@ -215,13 +229,20 @@ export async function getPopularSearchTerms(limit = 8): Promise<string[]> {
   }
 
   const counts = new Map<string, number>();
-  for (const row of (linksResult.data ?? []) as Array<{ ingredient_id: string }>) {
+  for (const row of (linksResult.data ?? []) as Array<{
+    ingredient_id: string;
+  }>) {
     counts.set(row.ingredient_id, (counts.get(row.ingredient_id) ?? 0) + 1);
   }
 
   return Array.from(counts.entries())
-    .map(([ingredientId, count]) => ({ name: nameById.get(ingredientId), count }))
-    .filter((entry): entry is { name: string; count: number } => Boolean(entry.name))
+    .map(([ingredientId, count]) => ({
+      name: nameById.get(ingredientId),
+      count,
+    }))
+    .filter((entry): entry is { name: string; count: number } =>
+      Boolean(entry.name),
+    )
     .sort((a, b) => b.count - a.count)
     .slice(0, limit)
     .map((entry) => entry.name);

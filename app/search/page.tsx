@@ -1,19 +1,19 @@
+import { Suspense } from "react";
 import CategoriesSearch from "@/components/search/CategoriesSearch";
 import PopularSearch from "@/components/search/PopularSearch";
 import SearchBar from "@/components/search/SearchBar";
-import SearchResults from "@/components/search/SearchResults";
 import Title from "@/components/shared/Title";
 import {
-  getCategoryById,
   getPopularSearchTerms,
-  getProductsByCategory,
   getTopLevelCategoriesWithProductCounts,
   searchCatalog,
 } from "@/lib/supabase";
-import type { CategoryWithCount, Product } from "@/types/database";
+import { getServerLanguage, localizeCategoryName } from "@/lib/i18n-server";
+import type { CategoryWithCount } from "@/types/database";
+import SearchResults from "@/components/search/SearchResults";
 
 interface SearchPageProps {
-  searchParams: Promise<{ q?: string; category?: string }>;
+  searchParams: Promise<{ q?: string }>;
 }
 
 async function safe<T>(promise: Promise<T>, fallback: T): Promise<T> {
@@ -26,37 +26,31 @@ async function safe<T>(promise: Promise<T>, fallback: T): Promise<T> {
 }
 
 export default async function SearchPage({ searchParams }: SearchPageProps) {
-  const { q, category } = await searchParams;
+  const { q } = await searchParams;
   const query = q?.trim();
-  const categoryId = category?.trim();
+  const language = await getServerLanguage();
 
-  // ── Results view (search query or selected category) ────────
-  if (query || categoryId) {
-    let heading = "";
-    let products: Product[] = [];
-
-    if (categoryId) {
-      const [category, categoryProducts] = await Promise.all([
-        safe(getCategoryById(categoryId), null),
-        safe(getProductsByCategory(categoryId, { limit: 50 }), []),
-      ]);
-      heading = category?.name ?? "Category";
-      products = categoryProducts;
-    } else if (query) {
-      const hits = await safe(searchCatalog(query, 20), []);
-      heading = `Results for “${query}”`;
-      products = hits.map((hit) => hit.product);
-    }
+  // ── Results view (search query) ──────────────────────────────
+  if (query) {
+    const hits = await safe(searchCatalog(query, 20), []);
+    const products = hits.map((hit) => hit.product);
+    const heading = `Results for “${query}”`;
 
     return (
       <div className="flex flex-col gap-8 pt-2">
         <Title title="Search Results" subtitle={heading} profile />
-        <SearchBar
-          key={categoryId ?? query ?? ""}
-          defaultValue={query ?? ""}
-          resultCount={products.length}
+        <Suspense
+          fallback={
+            <div className="h-12 w-full animate-pulse rounded-2xl bg-muted" />
+          }
+        >
+          <SearchBar resultCount={products.length} />
+        </Suspense>
+        <SearchResults
+          heading={heading}
+          products={products}
+          language={language}
         />
-        <SearchResults heading={heading} products={products} />
       </div>
     );
   }
@@ -67,6 +61,14 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
     safe(getPopularSearchTerms(8), [] as string[]),
   ]);
 
+  const categoryItems = await Promise.all(
+    categories.map(async (category) => ({
+      id: category.id,
+      title: await localizeCategoryName(category, language),
+      count: category.productCount,
+    })),
+  );
+
   return (
     <div className="flex flex-col gap-8 pt-2">
       <Title
@@ -74,9 +76,15 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
         subtitle="Find medicines & supplements"
         profile
       />
-      <SearchBar defaultValue="" />
+      <Suspense
+        fallback={
+          <div className="h-12 w-full animate-pulse rounded-2xl bg-muted" />
+        }
+      >
+        <SearchBar />
+      </Suspense>
       <PopularSearch searches={popularTerms} />
-      <CategoriesSearch categories={categories} />
+      <CategoriesSearch categories={categoryItems} />
     </div>
   );
 }
