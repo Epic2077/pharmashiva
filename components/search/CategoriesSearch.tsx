@@ -9,26 +9,25 @@ import {
   Soup,
 } from "lucide-react";
 import CategoriesCard from "./CategoriesCard";
+import type { CategoryWithCount } from "@/types/database";
 
-interface Category {
-  icon: ReactElement;
-  title: string;
-  count: number;
+interface CategoriesSearchProps {
+  categories: CategoryWithCount[];
 }
 
-export default function CategoriesSearch() {
-  const categories: Category[] = [
-    { icon: <Pill className="size-5" />, title: "Vitamins", count: 142 },
-    { icon: <Bandage className="size-5" />, title: "Pain Relief", count: 89 },
-    { icon: <Gem className="size-5" />, title: "Minerals", count: 56 },
-    {
-      icon: <Leaf className="size-5" />,
-      title: "Herbal Supplements",
-      count: 73,
-    },
-    { icon: <Soup className="size-5" />, title: "Digestive Health", count: 42 },
-    { icon: <Shield className="size-5" />, title: "Immune Support", count: 67 },
-  ];
+function iconFor(name: string): ReactElement {
+  const text = name.toLowerCase();
+  if (/(vitamin|ویتامین)/.test(text)) return <Pill className="size-5" />;
+  if (/(herbal|گیاهی)/.test(text)) return <Leaf className="size-5" />;
+  if (/(mineral|معدنی)/.test(text)) return <Gem className="size-5" />;
+  if (/(digest|گوارش)/.test(text)) return <Soup className="size-5" />;
+  if (/(immune|ایمنی)/.test(text)) return <Shield className="size-5" />;
+  if (/(pain|درد)/.test(text)) return <Bandage className="size-5" />;
+  return <Pill className="size-5" />;
+}
+
+export default function CategoriesSearch({ categories }: CategoriesSearchProps) {
+  if (categories.length === 0) return null;
 
   return (
     <div className="flex flex-col gap-3">
@@ -38,11 +37,11 @@ export default function CategoriesSearch() {
       </div>
       {categories.map((category) => (
         <CategoriesCard
-          key={category.title}
-          icon={category.icon}
-          title={category.title}
-          count={category.count}
-          href={`/categories/${category.title.toLowerCase().replace(/ /g, "-")}`}
+          key={category.id}
+          icon={iconFor(category.name)}
+          title={category.name}
+          count={category.productCount}
+          href={`/search?category=${category.id}`}
         />
       ))}
     </div>

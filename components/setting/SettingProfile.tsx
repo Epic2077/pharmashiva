@@ -1,6 +1,14 @@
 import { BadgeCheck, User } from "lucide-react";
 
-export default function SettingProfile() {
+interface SettingProfileProps {
+  name?: string;
+  email?: string;
+}
+
+export default function SettingProfile({
+  name = "Pharmacist",
+  email = "pharmacist@shiva.app",
+}: SettingProfileProps) {
   return (
     <div className="relative overflow-hidden rounded-2xl bg-[url('/texture/texture-green.png')] bg-cover bg-center p-5 shadow-xl">
       {/* Soft bloom keeps the marble texture from feeling flat. */}
@@ -14,12 +22,10 @@ export default function SettingProfile() {
         </div>
         <div className="min-w-0">
           <div className="flex items-center gap-1.5">
-            <h2 className="truncate text-xl font-bold text-white">
-              Pharmacist
-            </h2>
+            <h2 className="truncate text-xl font-bold text-white">{name}</h2>
             <BadgeCheck className="size-5 shrink-0 text-white/80" />
           </div>
-          <p className="truncate text-sm text-white/70">pharmacist@shiva.app</p>
+          <p className="truncate text-sm text-white/70">{email}</p>
         </div>
       </div>
     </div>

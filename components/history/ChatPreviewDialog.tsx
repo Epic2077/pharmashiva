@@ -1,6 +1,8 @@
 "use client";
 
+import { useCallback, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
+import { XIcon } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -35,8 +37,51 @@ export function ChatPreviewDialog({
   const chat = useChat(open ? chatId : null);
   const messages = chat?.messages ?? getMockPreview(chatId);
 
+  // While the dialog is open it owns a history entry, so the browser Back
+  // button (and Android/iOS back gesture) closes the dialog instead of
+  // navigating away from the page.
+  const pushedRef = useRef(false);
+
+  useEffect(() => {
+    if (!open) return;
+
+    window.history.pushState({ chatPreview: chatId }, "");
+    pushedRef.current = true;
+
+    const handlePopState = () => {
+      if (!pushedRef.current) return;
+      pushedRef.current = false;
+      onOpenChange(false);
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => {
+      window.removeEventListener("popstate", handlePopState);
+    };
+  }, [open, chatId, onOpenChange]);
+
+  const handleClose = useCallback(() => {
+    if (pushedRef.current) {
+      pushedRef.current = false;
+      window.history.back();
+    }
+    onOpenChange(false);
+  }, [onOpenChange]);
+
+  const handleOpenChat = useCallback(() => {
+    pushedRef.current = false;
+    onOpenChange(false);
+    router.replace(`/home/chat/${chatId}`);
+  }, [chatId, onOpenChange, router]);
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (next) onOpenChange(next);
+        else handleClose();
+      }}
+    >
       <DialogContent
         showCloseButton={false}
         className="max-h-[85dvh] w-[calc(100%-1.5rem)] max-w-md grid-rows-[auto_minmax(0,1fr)_auto] rounded-3xl p-0"
@@ -54,6 +99,14 @@ export function ChatPreviewDialog({
             <span className="shrink-0 rounded-full bg-muted px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
               Preview
             </span>
+            <button
+              type="button"
+              onClick={handleClose}
+              aria-label="Close preview"
+              className="shrink-0 rounded-full p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <XIcon className="size-4" />
+            </button>
           </div>
         </DialogHeader>
 
@@ -63,13 +116,7 @@ export function ChatPreviewDialog({
         </div>
 
         <DialogFooter className="shrink-0 border-t border-border px-5 py-3">
-          <Button
-            className="w-full rounded-full"
-            onClick={() => {
-              onOpenChange(false);
-              router.push(`/home/chat/${chatId}`);
-            }}
-          >
+          <Button className="w-full rounded-full" onClick={handleOpenChat}>
             Open chat
           </Button>
         </DialogFooter>

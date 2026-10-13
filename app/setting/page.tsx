@@ -3,6 +3,7 @@ import {
   LanguagesIcon,
   LogOutIcon,
   PaletteIcon,
+  User,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import SettingProfile from "@/components/setting/SettingProfile";
@@ -21,6 +22,16 @@ export default function SettingPage() {
   return (
     <div className="flex flex-col gap-6">
       <SettingProfile />
+
+      <div className="flex flex-col gap-3">
+        <SectionLabel>Account</SectionLabel>
+        <SettingTabs
+          icon={<User className="size-5" />}
+          title="Profile"
+          description="Manage your profile information"
+          href="/setting/profile"
+        />
+      </div>
 
       {/* Tabs with `dialogue` open a modal instead of navigating. */}
       <div className="flex flex-col gap-3">
