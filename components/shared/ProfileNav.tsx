@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { redirect, useRouter } from "next/navigation";
 import {
   CreditCardIcon,
   LogIn,
@@ -51,7 +51,10 @@ export default function ProfileNav({ isLoggedIn = false }: ProfileNavProps) {
             <CreditCardIcon />
             Billing
           </DropdownMenuItem>
-          <DropdownMenuItem className="flex items-center gap-2 text-base">
+          <DropdownMenuItem
+            className="flex items-center gap-2 text-base"
+            onClick={() => redirect("/setting")}
+          >
             <SettingsIcon />
             Settings
           </DropdownMenuItem>

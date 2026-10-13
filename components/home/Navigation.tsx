@@ -8,33 +8,33 @@ export default function HomeNavigation() {
       name: "New Consultation",
       sub: "Start a new patient case",
       href: "/home/chat",
-      icon: <MessageCircle className="w-6 h-6 text-background size-0" />,
+      icon: <MessageCircle className="size-6" />,
     },
     {
       id: "recent-cases",
-      name: "recent cases",
+      name: "Recent Cases",
       sub: "View your past consultations",
-      href: "/history",
-      icon: <History className="w-6 size-0 h-6 size-0 text-foreground" />,
+      href: "/home/history",
+      icon: <History className="size-6" />,
     },
     {
       id: "product-search",
       name: "Product Search",
-      sub: "Search supplimentts directly",
-      href: "/products",
-      icon: <Package className="w-6 size-0 h-6 size-0 text-foreground" />,
+      sub: "Search supplements directly",
+      href: "/search",
+      icon: <Package className="size-6" />,
     },
     {
       id: "settings",
       name: "Settings",
       sub: "App & account preferences",
-      href: "/settings",
-      icon: <Settings className="w-6 size-0 h-6 size-0 text-foreground" />,
+      href: "/setting",
+      icon: <Settings className="size-6" />,
     },
   ];
 
   return (
-    <div className="grid gap-4 mt-10">
+    <div className="grid gap-4">
       {nav.map((item) => (
         <NavigationButton key={item.id} item={item} />
       ))}

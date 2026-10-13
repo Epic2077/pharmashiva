@@ -1,71 +1,88 @@
 "use client";
 
-import {
-  Search,
-  MoreHorizontal,
-  Settings,
-  User,
-  Bell,
-  History,
-  MessageCircle,
-} from "lucide-react";
+import { History, MessageCircle, Search } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
+import type { ElementType } from "react";
 import { FaHome } from "react-icons/fa";
+import { cn } from "@/lib/utils";
 
-export default function NavMenu() {
-  const [active, setActive] = useState("Home");
-  const moreRef = useRef<HTMLDivElement>(null);
+interface NavItem {
+  title: string;
+  href: string;
+  icon: ElementType;
+}
 
-  const iconClass = `w-6 h-6 ${active === "Home" ? "text-primary" : "text-foreground"}`;
-  const navMenuItems = [
-    { title: "Home", href: "/home", icon: <FaHome className={iconClass} /> },
-    {
-      title: "Chat",
-      href: "/home/chat",
-      icon: <MessageCircle className={iconClass} />,
-    },
-    {
-      title: "history",
-      href: "/home/history",
-      icon: <History className={iconClass} />,
-    },
-    {
-      title: "Search",
-      href: "/search",
-      icon: <Search className={iconClass} />,
-    },
-  ];
+const NAV_ITEMS: NavItem[] = [
+  { title: "Home", href: "/home", icon: FaHome },
+  { title: "Chat", href: "/home/chat", icon: MessageCircle },
+  { title: "History", href: "/home/history", icon: History },
+  { title: "Search", href: "/search", icon: Search },
+];
 
-  useEffect(() => {
-    window.addEventListener("popstate", () => {
-      const currentPath = window.location.pathname;
-      const activeItem = navMenuItems.find((item) => item.href === currentPath);
-      if (activeItem) {
-        setActive(activeItem.title);
-      }
-    });
-  }, []);
+function isPathActive(pathname: string, href: string) {
+  // Home is the only route that should not stay lit for its children.
+  if (href === "/home") return pathname === "/home";
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
 
-  return (
-    <div className="fixed bottom-0 left-0 w-full bg-background border-t border-border py-4">
-      <div className="flex justify-around items-center">
-        {navMenuItems.map((item) => (
-          <Link
-            aria-label={item.title}
-            href={item.href}
-            key={item.title}
-            className="flex flex-col items-center justify-center text-sm text-foreground hover:text-primary transition-colors duration-200 gap-1"
-          >
-            {item.icon}
-            <span
-              className={`${active === item.title ? "text-primary" : "text-muted-foreground"}`}
+export default function NavMenu({
+  variant = "mobile",
+}: {
+  variant?: "mobile" | "desktop";
+}) {
+  const pathname = usePathname();
+
+  if (variant === "desktop") {
+    return (
+      <nav className="hidden items-center gap-1 py-3 md:flex">
+        {NAV_ITEMS.map((item) => {
+          const active = isPathActive(pathname, item.href);
+          return (
+            <Link
+              key={item.title}
+              href={item.href}
+              aria-current={active ? "page" : undefined}
+              className={cn(
+                "rounded-full px-4 py-1.5 text-sm font-medium transition-colors",
+                active
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
             >
               {item.title}
-            </span>
-          </Link>
-        ))}
+            </Link>
+          );
+        })}
+      </nav>
+    );
+  }
+
+  return (
+    <nav className="w-full shrink-0 border-t border-border bg-background py-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] md:hidden">
+      <div className="flex items-center justify-around">
+        {NAV_ITEMS.map((item) => {
+          const active = isPathActive(pathname, item.href);
+          const Icon = item.icon;
+          return (
+            <Link
+              key={item.title}
+              href={item.href}
+              aria-label={item.title}
+              aria-current={active ? "page" : undefined}
+              className={cn(
+                "flex flex-col items-center justify-center gap-1 py-1 text-sm transition-colors",
+                active
+                  ? "text-primary"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <Icon className="size-6" />
+              <span className="text-xs font-medium">{item.title}</span>
+            </Link>
+          );
+        })}
       </div>
-    </div>
+    </nav>
   );
 }

@@ -1,6 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import {
+  Activity,
+  Bone,
+  Brain,
+  Eye,
+  Soup,
+  type LucideIcon,
+} from "lucide-react";
 import { cn } from "cn";
 import { ChatPreviewDialog } from "./ChatPreviewDialog";
 
@@ -16,6 +24,20 @@ interface HistoryCardProps {
 
 /** How long a press must be held before the preview opens. */
 const HOLD_DURATION = 450;
+
+const ICON_BY_SLUG: Record<string, LucideIcon> = {
+  eye: Eye,
+  stomach: Soup,
+  head: Brain,
+  back: Bone,
+  joint: Activity,
+};
+
+const STATUS_CLASSES: Record<string, string> = {
+  "In Progress": "bg-primary/15 text-primary",
+  Closed: "bg-chart-3/15 text-chart-3",
+  Open: "bg-destructive/15 text-destructive",
+};
 
 export default function HistoryCard({
   title,
@@ -68,6 +90,8 @@ export default function HistoryCard({
     onClick?.();
   }
 
+  const Icon = ICON_BY_SLUG[icon] ?? Eye;
+
   return (
     <>
       <div
@@ -80,28 +104,26 @@ export default function HistoryCard({
         // a vertical scroll cancel the hold mid-gesture on touch.
         onContextMenu={(event) => event.preventDefault()}
         className={cn(
-          "bg-card text-card-foreground flex select-none items-center justify-between px-4 py-6 rounded-2xl shadow-xl transition-transform duration-150 touch-pan-y active:scale-[0.99]",
+          "flex select-none items-center gap-4 rounded-2xl border bg-card px-4 py-5 text-card-foreground shadow-sm transition-transform duration-150 touch-pan-y active:scale-[0.99]",
           holding && "scale-[0.98] opacity-90",
         )}
       >
-        <div className="flex items-center gap-4">
-          <div className="w-10 h-10 bg-accent flex justify-center items-center rounded-lg">
-            {icon.split("")[0]}
-          </div>
-          <div className="flex flex-col gap-2">
-            <h3 className="text-lg font-medium">{title}</h3>
-            <p className="text-sm text-muted-foreground">{date}</p>
-          </div>
+        <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+          <Icon className="size-5" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <h3 className="truncate text-base font-semibold">{title}</h3>
+          <p className="truncate text-sm text-muted-foreground">{date}</p>
         </div>
-        <div
-          className={cn("rounded-full px-3 py-1 text-xs font-semibold", {
-            "bg-accent-foreground text-white": status === "In Progress",
-            "bg-chart-3 text-white": status === "Closed",
-            "bg-destructive text-white": status === "Open",
-          })}
+        <span
+          className={cn(
+            "inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold",
+            STATUS_CLASSES[status] ?? "bg-muted text-muted-foreground",
+          )}
         >
+          <span className="size-1.5 rounded-full bg-current" />
           {status}
-        </div>
+        </span>
       </div>
 
       {chatId ? (
