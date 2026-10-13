@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Manrope, Roboto } from "next/font/google";
 import { THEME_INIT_SCRIPT } from "@/lib/theme-init";
 import "./globals.css";
@@ -19,6 +19,16 @@ export const metadata: Metadata = {
     template: "%s · PharmaShiva",
   },
   description: "Your pharmacy AI assistant",
+};
+
+// Resize the layout viewport when the on-screen keyboard opens (iOS Safari
+// overlays it by default), so the pinned chat composer stays visible above the
+// keyboard and `100dvh` tracks the visible area.
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  interactiveWidget: "resizes-content",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

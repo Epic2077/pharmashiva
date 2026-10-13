@@ -7,6 +7,7 @@ import {
 import type { ReactNode } from "react";
 import SettingProfile from "@/components/setting/SettingProfile";
 import SettingTabs from "@/components/setting/SettingTabs";
+import Logo from "@/components/shared/Logo";
 
 function SectionLabel({ children }: { children: ReactNode }) {
   return (
@@ -54,6 +55,11 @@ export default function SettingPage() {
           href="/auth/login"
           variant="destructive"
         />
+
+        <Logo size="small" className="mt-6 flex-col" title />
+        <p className=" mb-5 text-muted-foreground text-sm text-center">
+          Version 1.0.0
+        </p>
       </div>
     </div>
   );
