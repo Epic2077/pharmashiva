@@ -19,6 +19,7 @@ SiteHarvest crawls an e-commerce/catalog site (e.g. darukade.com) and normalizes
 | `SUPABASE_URL`              | `https://<project-ref>.supabase.co`                             |
 | `SUPABASE_SERVICE_ROLE_KEY` | Service-role key (server-side reads/writes)                     |
 | `SUPABASE_ACCESS_TOKEN`     | Personal access token — only used by `db:init` (Management API) |
+| `SUPABASE_ANON_KEY`         | Anon key — used only by the server-side auth client             |
 
 AI agents should read with the **service-role key** (or a Postgres connection string from the Supabase dashboard).
 
@@ -158,6 +159,51 @@ Primary key: `(product_id, ingredient_id)`.
 - `crawl_urls` — internal crawl queue (status, attempts, leases).
 - `crawl_errors` — logged crawl failures.
 
+### `chats` (application — one row per consultation)
+
+Created by the chat UI when a new consultation starts. The title and icon are
+chosen by the app: a deterministic lucide icon slug picked from the first
+message, and a short AI-written title that replaces the provisional one.
+
+| column                     | type        | notes                                                       |
+| -------------------------- | ----------- | ----------------------------------------------------------- |
+| `id`                       | uuid        | primary key                                                 |
+| `user_id`                  | uuid        | FK → `auth.users.id` (**cascade**) — the owner               |
+| `title`                    | text        | chat name shown in the header and history                   |
+| `icon`                     | text        | lucide slug, e.g. `head`, `lung`, `general` (list below)     |
+| `status`                   | text        | `open` \| `in_progress` \| `closed`                          |
+| `model`                    | text        | `flash` (fast) \| `pro` (deep thinking) — the latest mode    |
+| `created_at`, `updated_at` | timestamptz | `updated_at` maintained by the `set_updated_at` trigger      |
+
+### `chat_messages` (application — transcript)
+
+One row per turn, in stream order.
+
+| column       | type        | notes                                                             |
+| ------------ | ----------- | ----------------------------------------------------------------- |
+| `id`         | uuid        | primary key                                                       |
+| `chat_id`    | uuid        | FK → `chats.id` (**cascade**)                                     |
+| `role`       | text        | `user` \| `assistant`                                             |
+| `content`    | text        | the message text                                                  |
+| `thinking`   | text        | nullable — the model's reasoning trace, shown in the Thinking tab |
+| `status`     | text        | `complete` \| `error`                                             |
+| `safety`     | jsonb       | nullable — the deterministic safety assessment                    |
+| `products`   | jsonb       | nullable — the recommended products attached to the answer        |
+| `created_at` | timestamptz | ordering key (ascending)                                          |
+
+**RLS is enabled on both tables** (unlike the catalog tables, which have it
+disabled). Each has one policy allowing a signed-in user to `select`/`insert`/
+`update`/`delete` only rows they own. The app's data layer additionally uses the
+service role and always filters by `user_id` explicitly, so RLS is
+defence-in-depth. Signing out and back in as another user must never surface
+someone else's chats.
+
+`chats.icon` is a lucide icon **slug**, not a component name — the app maps
+slug → component in `components/history/HistoryCard.tsx` (`CHAT_ICON_COMPONENTS`).
+Known slugs: `general`, `head`, `eye`, `ear`, `stomach`, `back`, `joint`,
+`heart`, `skin`, `cold`, `lung`, `allergy`, `sleep`, `baby`, `infection`,
+`medicine`, `mind`.
+
 ---
 
 ## 3. Relationships
@@ -174,10 +220,13 @@ erDiagram
   categories ||--o{ categories : "parent_id (tree)"
   products ||--o{ product_ingredients : has
   ingredients ||--o{ product_ingredients : "ingredient_id"
+  auth_users ||--o{ chats : owns
+  chats ||--o{ chat_messages : has
 ```
 
 - **Product → category:** a product links to its leaf category; traverse `categories.parent_id` to get the full path.
 - **Product → ingredients:** join through `product_ingredients`; the amount/unit live on the join row.
+- **User → chats → messages:** `chats.user_id` → `auth.users.id` and `chat_messages.chat_id` → `chats.id`, both `on delete cascade` (deleting a user removes their whole history).
 
 ---
 

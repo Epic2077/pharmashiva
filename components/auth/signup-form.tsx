@@ -16,9 +16,22 @@ import {
   FieldLabel,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { useState } from "react";
+import { useActionState, useState } from "react";
+import { useFormStatus } from "react-dom";
 import { Eye, EyeClosed } from "lucide-react";
 import Link from "next/link";
+import { signupAction } from "@/lib/auth/actions";
+import { EMPTY_AUTH_STATE } from "@/lib/auth/types";
+
+/** Submit button that reflects the parent form's pending state. */
+function SubmitButton({ children }: { children: React.ReactNode }) {
+  const { pending } = useFormStatus();
+  return (
+    <Button type="submit" disabled={pending}>
+      {pending ? "Creating account…" : children}
+    </Button>
+  );
+}
 
 export function SignupForm({
   className,
@@ -26,6 +39,8 @@ export function SignupForm({
 }: React.ComponentProps<"div">) {
   const [hide, setHide] = useState(true);
   const [hideConfirm, setHideConfirm] = useState(true);
+  const [state, formAction] = useActionState(signupAction, EMPTY_AUTH_STATE);
+
   return (
     <div className={cn("flex flex-col gap-6", className)} {...props}>
       <Card>
@@ -36,13 +51,15 @@ export function SignupForm({
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <form>
+          <form action={formAction}>
             <FieldGroup>
               <Field>
                 <FieldLabel htmlFor="name">Full Name</FieldLabel>
                 <Input
                   id="name"
+                  name="fullName"
                   type="text"
+                  autoComplete="name"
                   placeholder="Ashkan Sadeghi"
                   required
                 />
@@ -51,7 +68,9 @@ export function SignupForm({
                 <FieldLabel htmlFor="email">Email</FieldLabel>
                 <Input
                   id="email"
+                  name="email"
                   type="email"
+                  autoComplete="email"
                   placeholder="m@example.com"
                   required
                 />
@@ -63,7 +82,9 @@ export function SignupForm({
                     <div className="flex relative">
                       <Input
                         id="password"
+                        name="password"
                         type={hide ? "password" : "text"}
+                        autoComplete="new-password"
                         placeholder="*******"
                         required
                       />
@@ -87,7 +108,9 @@ export function SignupForm({
                     <div className="relative flex">
                       <Input
                         id="confirm-password"
+                        name="confirmPassword"
                         type={hideConfirm ? "password" : "text"}
+                        autoComplete="new-password"
                         placeholder="*******"
                         required
                       />
@@ -110,7 +133,20 @@ export function SignupForm({
                 </FieldDescription>
               </Field>
               <Field>
-                <Button type="submit">Create Account</Button>
+                {state.error ? (
+                  <p
+                    role="alert"
+                    className="text-sm font-medium text-destructive"
+                  >
+                    {state.error}
+                  </p>
+                ) : null}
+                {state.notice ? (
+                  <p role="status" className="text-sm text-muted-foreground">
+                    {state.notice}
+                  </p>
+                ) : null}
+                <SubmitButton>Create Account</SubmitButton>
                 <FieldDescription className="text-center">
                   Already have an account?{" "}
                   <Link href="/auth/login">Sign in</Link>

@@ -13,8 +13,7 @@ import {
 } from "@/components/animate-ui/components/radix/dialog";
 import { Button } from "@/components/ui/button";
 import { ChatMessages } from "@/components/chat/ChatMessages";
-import { useChat } from "@/lib/chat/chat-store";
-import { getMockPreview } from "@/lib/chat/mock-preview";
+import { ensureChatLoaded, useChat } from "@/lib/chat/chat-store";
 
 interface ChatPreviewDialogProps {
   chatId: string;
@@ -33,9 +32,17 @@ export function ChatPreviewDialog({
 }: ChatPreviewDialogProps) {
   const router = useRouter();
 
-  // A chat started in this tab wins; otherwise fall back to the mock history.
+  // A chat started in this tab is already in memory; otherwise hydrate it from
+  // Supabase when the preview opens. Reading through `useChat` re-renders us
+  // once the store has the chat, so no local loading state is needed.
   const chat = useChat(open ? chatId : null);
-  const messages = chat?.messages ?? getMockPreview(chatId);
+
+  useEffect(() => {
+    if (!open || chat) return;
+    void ensureChatLoaded(chatId);
+  }, [open, chatId, chat]);
+
+  const messages = chat?.messages ?? [];
 
   // While the dialog is open it owns a history entry, so the browser Back
   // button (and Android/iOS back gesture) closes the dialog instead of
@@ -112,7 +119,13 @@ export function ChatPreviewDialog({
 
         {/* ChatMessages owns its own scrolling, so the parent just bounds it. */}
         <div className="min-h-0 flex-1 px-5">
-          <ChatMessages messages={messages} isStreaming={false} />
+          {chat ? (
+            <ChatMessages messages={messages} isStreaming={false} />
+          ) : (
+            <p className="py-10 text-center text-sm text-muted-foreground">
+              Loading conversation…
+            </p>
+          )}
         </div>
 
         <DialogFooter className="shrink-0 border-t border-border px-5 py-3">

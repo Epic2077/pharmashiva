@@ -1,11 +1,9 @@
-import { User } from "lucide-react";
 import Logo from "../shared/Logo";
-import { FaUserAlt } from "react-icons/fa";
-import ProfileNav from "../shared/ProfileNav";
+import ProfileNav, { type ProfileNavUser } from "../shared/ProfileNav";
 
 interface HomeHeaderProps {
   isLoggedIn: boolean;
-  user: () => void;
+  user?: ProfileNavUser | null;
 }
 
 export default function HomeHeader({
@@ -19,7 +17,7 @@ export default function HomeHeader({
         className="flex flex-row! gap-4 items-center justify-center"
         title
       />
-      <ProfileNav isLoggedIn={isLoggedIn} />
+      <ProfileNav isLoggedIn={isLoggedIn} user={user} />
     </header>
   );
 }

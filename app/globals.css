@@ -33,6 +33,16 @@
 
   --color-destructive: var(--destructive);
 
+  /* Safety / status semantics (used by the markdown callouts + safety alerts) */
+  --color-danger: var(--danger);
+  --color-danger-background: var(--danger-background);
+  --color-warning: var(--warning);
+  --color-warning-background: var(--warning-background);
+  --color-success: var(--success);
+  --color-success-background: var(--success-background);
+  --color-info: var(--info);
+  --color-info-background: var(--info-background);
+
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
 
@@ -94,6 +104,14 @@
 
   /* Semantic */
   --destructive: #d9535b;
+  --danger: #c0392b;
+  --danger-background: #fbeceb;
+  --warning: #a9741a;
+  --warning-background: #fdf3e0;
+  --success: #1f8a5b;
+  --success-background: #e8f7f0;
+  --info: #2d6fb0;
+  --info-background: #eaf2fb;
 
   /* Borders / Inputs */
   --border: #dce7e5;
@@ -161,6 +179,14 @@
 
   /* Semantic */
   --destructive: #f07a80;
+  --danger: #f0928f;
+  --danger-background: #3a2020;
+  --warning: #e7b75a;
+  --warning-background: #382c12;
+  --success: #59c695;
+  --success-background: #142d24;
+  --info: #6fa8d8;
+  --info-background: #17293b;
 
   /* Borders / Inputs */
   --border: #29403e;

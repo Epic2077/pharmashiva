@@ -337,6 +337,12 @@
   color: var(--pb-spark);
 }
 
+/* "Think" toggle (ChatComposer): tinted pill while deep thinking is on. */
+.prompt-bar__pick[data-think] {
+  background: color-mix(in srgb, var(--pb-spark) 16%, transparent);
+  color: var(--pb-spark);
+}
+
 .prompt-bar__menu[data-kind='effort'] {
   right: auto;
   width: 248px;

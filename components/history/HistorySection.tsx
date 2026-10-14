@@ -3,67 +3,17 @@
 import { useRouter } from "next/navigation";
 import type { CSSProperties } from "react";
 import AnimatedList from "@/components/react-bits/AnimatedList";
+import type { ChatStatus } from "@/lib/chat/types";
 import HistoryCard from "./HistoryCard";
 
-interface HistoryEntry {
-  id: number;
+export interface HistoryEntry {
+  id: string;
   title: string;
+  /** Preformatted on the server so the list renders identically everywhere. */
   date: string;
-  status: string;
+  status: ChatStatus;
   icon: string;
 }
-
-const history: HistoryEntry[] = [
-  {
-    id: 1,
-    title: "Eye pain",
-    date: "Today . 12:12 AM",
-    status: "In Progress",
-    icon: "eye",
-  },
-  {
-    id: 2,
-    title: "Stomach discomfort",
-    date: "Yesterday . 10:12 PM",
-    status: "Closed",
-    icon: "stomach",
-  },
-  {
-    id: 3,
-    title: "Headache",
-    date: "Yesterday . 08:12 PM",
-    status: "Closed",
-    icon: "head",
-  },
-  {
-    id: 4,
-    title: "Back pain",
-    date: "Today . 09:12 AM",
-    status: "Open",
-    icon: "back",
-  },
-  {
-    id: 5,
-    title: "Joint pain",
-    date: "Today . 11:12 AM",
-    status: "In Progress",
-    icon: "joint",
-  },
-  {
-    id: 6,
-    title: "Joint pain",
-    date: "Today . 11:12 AM",
-    status: "In Progress",
-    icon: "joint",
-  },
-  {
-    id: 7,
-    title: "Joint pain",
-    date: "Today . 11:12 AM",
-    status: "In Progress",
-    icon: "joint",
-  },
-];
 
 /**
  * AnimatedList is used for its reveal-on-scroll animation only, so every chrome
@@ -81,12 +31,24 @@ const plainRowStyle = {
   "--al-ring-fill": "transparent",
 } as CSSProperties;
 
-export default function HistorySection() {
+export default function HistorySection({
+  entries,
+}: {
+  entries: HistoryEntry[];
+}) {
   const router = useRouter();
+
+  if (entries.length === 0) {
+    return (
+      <p className="rounded-2xl border border-dashed px-4 py-12 text-center text-sm text-muted-foreground">
+        No cases yet. Start a consultation and it will show up here.
+      </p>
+    );
+  }
 
   return (
     <AnimatedList
-      items={history.map((item) => ({
+      items={entries.map((item) => ({
         id: item.id,
         title: item.title,
         description: item.date,
@@ -106,7 +68,7 @@ export default function HistorySection() {
       width="100%"
       maxHeight="calc(100dvh - 16rem)"
       renderItem={(_item, index) => {
-        const item = history[index];
+        const item = entries[index];
         return (
           <div className="min-w-0 flex-1">
             <HistoryCard
@@ -114,13 +76,13 @@ export default function HistorySection() {
               date={item.date}
               icon={item.icon}
               status={item.status}
-              chatId={String(item.id)}
+              chatId={item.id}
             />
           </div>
         );
       }}
       onItemSelect={(_item, index) =>
-        router.push(`/home/chat/${history[index].id}`)
+        router.push(`/home/chat/${entries[index].id}`)
       }
     />
   );

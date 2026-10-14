@@ -3,20 +3,33 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Activity,
+  Baby,
+  Bandage,
   Bone,
   Brain,
+  Bug,
+  Ear,
   Eye,
+  HeartPulse,
+  Moon,
+  Pill,
+  ShieldPlus,
+  Smile,
   Soup,
+  Stethoscope,
+  Thermometer,
+  Wind,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "cn";
+import type { ChatStatus } from "@/lib/chat/types";
 import { ChatPreviewDialog } from "./ChatPreviewDialog";
 
 interface HistoryCardProps {
   title: string;
   date: string;
   icon: string;
-  status: string;
+  status: ChatStatus;
   /** Chat id used to open the preview. Omit to disable the hold gesture. */
   chatId?: string;
   onClick?: () => void;
@@ -25,18 +38,37 @@ interface HistoryCardProps {
 /** How long a press must be held before the preview opens. */
 const HOLD_DURATION = 450;
 
-const ICON_BY_SLUG: Record<string, LucideIcon> = {
-  eye: Eye,
-  stomach: Soup,
+/**
+ * Icon slug → component. The slug is chosen deterministically at creation time
+ * by `pickChatIcon` (lib/chat/icons.ts) and stored on the chat row.
+ */
+export const CHAT_ICON_COMPONENTS: Record<string, LucideIcon> = {
+  general: Stethoscope,
   head: Brain,
+  eye: Eye,
+  ear: Ear,
+  stomach: Soup,
   back: Bone,
   joint: Activity,
+  heart: HeartPulse,
+  skin: Bandage,
+  cold: Thermometer,
+  lung: Wind,
+  allergy: ShieldPlus,
+  sleep: Moon,
+  baby: Baby,
+  infection: Bug,
+  medicine: Pill,
+  mind: Smile,
 };
 
-const STATUS_CLASSES: Record<string, string> = {
-  "In Progress": "bg-primary/15 text-primary",
-  Closed: "bg-chart-3/15 text-chart-3",
-  Open: "bg-destructive/15 text-destructive",
+const STATUS_META: Record<ChatStatus, { label: string; className: string }> = {
+  open: { label: "Open", className: "bg-destructive/15 text-destructive" },
+  in_progress: {
+    label: "In Progress",
+    className: "bg-primary/15 text-primary",
+  },
+  closed: { label: "Closed", className: "bg-chart-3/15 text-chart-3" },
 };
 
 export default function HistoryCard({
@@ -90,7 +122,8 @@ export default function HistoryCard({
     onClick?.();
   }
 
-  const Icon = ICON_BY_SLUG[icon] ?? Eye;
+  const Icon = CHAT_ICON_COMPONENTS[icon] ?? Stethoscope;
+  const meta = STATUS_META[status] ?? STATUS_META.open;
 
   return (
     <>
@@ -118,11 +151,11 @@ export default function HistoryCard({
         <span
           className={cn(
             "inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold",
-            STATUS_CLASSES[status] ?? "bg-muted text-muted-foreground",
+            meta.className,
           )}
         >
           <span className="size-1.5 rounded-full bg-current" />
-          {status}
+          {meta.label}
         </span>
       </div>
 

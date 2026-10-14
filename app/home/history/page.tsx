@@ -1,13 +1,38 @@
 import HistoryFilters from "@/components/history/HistoryFilters";
 import HistoryHeader from "@/components/history/HistoryHeader";
-import HistorySection from "@/components/history/HistorySection";
+import HistorySection, {
+  type HistoryEntry,
+} from "@/components/history/HistorySection";
+import { getSessionUser } from "@/lib/auth/session";
+import { listChats } from "@/lib/chats/db";
+import { formatChatDate } from "@/lib/chats/format";
 
-export default function HistoryPage() {
+export const dynamic = "force-dynamic";
+
+export default async function HistoryPage() {
+  const user = await getSessionUser();
+
+  let entries: HistoryEntry[] = [];
+  if (user) {
+    try {
+      const chats = await listChats(user.id);
+      entries = chats.map((chat) => ({
+        id: chat.id,
+        title: chat.title,
+        icon: chat.icon,
+        status: chat.status,
+        date: formatChatDate(chat.updatedAt),
+      }));
+    } catch (error) {
+      console.error("[history] could not load chats:", error);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-8">
       <HistoryHeader />
       <HistoryFilters />
-      <HistorySection />
+      <HistorySection entries={entries} />
     </div>
   );
 }
