@@ -6,7 +6,7 @@ import Title from "@/components/shared/Title";
 import {
   getPopularSearchTerms,
   getTopLevelCategoriesWithProductCounts,
-  searchCatalog,
+  searchCatalogAi,
 } from "@/lib/supabase";
 import { getServerLanguage, localizeCategoryName } from "@/lib/i18n-server";
 import type { CategoryWithCount } from "@/types/database";
@@ -32,7 +32,9 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
 
   // ── Results view (search query) ──────────────────────────────
   if (query) {
-    const hits = await safe(searchCatalog(query, 20), []);
+    // Matches product name / name_en / brand / SKU / barcode as well as active
+    // ingredients and categories, so "zinc" or "moisturizer" find real products.
+    const hits = await safe(searchCatalogAi(query, 20), []);
     const products = hits.map((hit) => hit.product);
     const heading = `Results for “${query}”`;
 

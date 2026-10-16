@@ -13,10 +13,11 @@ import { jsonChatCompletion } from "./deepseek.service";
 const TITLE_SYSTEM_PROMPT = `You name pharmacy consultation threads.
 Given the patient's first message, reply with ONLY a JSON object: {"title": "..."}.
 Rules:
-- 2 to 5 words, Title Case, no trailing punctuation and no surrounding quotes.
-- Describe the complaint (for example "Tension Headache", "Child Fever", "Allergy Check").
+- 2 to 4 words, Title Case, no trailing punctuation and no surrounding quotes.
+- If the client name appears in the message, include it. Otherwise do NOT invent or add a name.
+- Focus on the main complaint/problem (e.g. "John Headache", "Tension Headache", "Child Fever").
 - Always write the title in English, even when the message is not.
-- Never include personal names, brands, or dosages.`;
+- Never include brands, dosages, ages, or other personal identifiers.`;
 
 /** Deterministic fallback title derived from the raw message. */
 export function fallbackChatTitle(message: string): string {

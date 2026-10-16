@@ -6,8 +6,9 @@ import type {
   ChatStatus,
   ChatSummary,
 } from "@/lib/chat/types";
-import type { ProductRecommendation, SafetyAssessment } from "@/types/ai";
+import type { CaseMemory, ProductRecommendation, SafetyAssessment } from "@/types/ai";
 import { getSupabaseClient } from "@/lib/supabase/server";
+import { coerceMemory } from "@/lib/chat/memory";
 
 /**
  * Server-only data access for chats and messages.
@@ -26,6 +27,7 @@ interface ChatRow {
   icon: string | null;
   status: string | null;
   model: string | null;
+  memory: unknown;
   created_at: string;
   updated_at: string;
 }
@@ -40,7 +42,8 @@ interface MessageRow {
   created_at: string;
 }
 
-const CHAT_COLUMNS = "id, title, icon, status, model, created_at, updated_at";
+const CHAT_COLUMNS =
+  "id, title, icon, status, model, memory, created_at, updated_at";
 const MESSAGE_COLUMNS =
   "id, role, content, thinking, safety, products, created_at";
 
@@ -59,6 +62,7 @@ function mapChat(row: ChatRow): ChatSummary {
     icon: coerceChatIcon(row.icon),
     status: coerceStatus(row.status),
     model: coerceModel(row.model),
+    memory: coerceMemory(row.memory),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -207,13 +211,14 @@ export async function appendChatMessage(
 export async function updateChat(
   userId: string,
   chatId: string,
-  patch: { title?: string; icon?: string; status?: ChatStatus; model?: ChatModel },
+  patch: { title?: string; icon?: string; status?: ChatStatus; model?: ChatModel; memory?: CaseMemory },
 ): Promise<ChatSummary | null> {
   const update: Record<string, unknown> = {};
   if (typeof patch.title === "string") update.title = patch.title;
   if (typeof patch.icon === "string") update.icon = patch.icon;
   if (patch.status) update.status = patch.status;
   if (patch.model) update.model = patch.model;
+  if (patch.memory) update.memory = patch.memory;
   if (Object.keys(update).length === 0) {
     const current = await getChat(userId, chatId);
     if (!current) return null;
@@ -223,6 +228,7 @@ export async function updateChat(
       icon: current.icon,
       status: current.status,
       model: current.model,
+      memory: current.memory,
       createdAt: current.createdAt,
       updatedAt: current.updatedAt,
     };
@@ -238,6 +244,38 @@ export async function updateChat(
     .maybeSingle();
   if (error) throw new Error(error.message);
   return data ? mapChat(data as unknown as ChatRow) : null;
+}
+
+export async function getChatMemory(
+  userId: string,
+  chatId: string,
+): Promise<CaseMemory | null> {
+  const sb = getSupabaseClient();
+  const { data, error } = await sb
+    .from("chats")
+    .select("memory")
+    .eq("id", chatId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) return null;
+  const row = data as { memory?: unknown };
+  return coerceMemory(row.memory);
+}
+
+export async function saveChatMemory(
+  userId: string,
+  chatId: string,
+  memory: CaseMemory,
+): Promise<boolean> {
+  const sb = getSupabaseClient();
+  const { error, count } = await sb
+    .from("chats")
+    .update({ memory }, { count: "exact" })
+    .eq("id", chatId)
+    .eq("user_id", userId);
+  if (error) throw new Error(error.message);
+  return (count ?? 0) > 0;
 }
 
 export async function deleteChat(

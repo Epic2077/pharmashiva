@@ -46,14 +46,44 @@ export interface CaseFacts {
   age: number | null;
   pregnancy: boolean | null;
   duration: string | null;
+  /** Customer name if the message states one, otherwise null. */
+  customerName: string | null;
   /** Important information the user has not provided. */
   missingInformation: string[];
   /** Facts the user explicitly stated. */
   statedFacts: string[];
   /** Facts the model inferred (never treated as certain). */
   inferredFacts: string[];
-  /** Terms to hand to the database search. */
+  /** Terms to hand to the database search (symptoms/goal). */
   searchTerms: string[];
+  /** AI-proposed product queries (categories, product classes, active ingredients). */
+  productQueries: string[];
+}
+
+/**
+ * Accumulated, per-chat memory of the case. Built by `mergeMemory`
+ * (lib/chat/memory.ts), which is append-only so a red flag raised on an earlier
+ * turn is never silently dropped. This is what lets a follow-up like "it gets
+ * worse day by day" stay attached to the original problem.
+ */
+export interface CaseMemory {
+  customerName: string | null;
+  /** Main problem(s), in the customer's own words. */
+  problems: string[];
+  symptoms: string[];
+  /** Latest stated duration or progression. */
+  duration: string | null;
+  allergies: string[];
+  conditions: string[];
+  medications: string[];
+  age: number | null;
+  pregnancy: boolean | null;
+  /** Append-only key statements; the red-flag safety context. */
+  notes: string[];
+  /** Retrieval queries accumulated across the case. */
+  productQueries: string[];
+  /** ISO timestamp of the last memory update. */
+  updatedAt?: string;
 }
 
 export interface CaseInterpretation {
@@ -96,6 +126,7 @@ export type ChatStage =
 export type ChatEvent =
   | { type: "status"; stage: ChatStage }
   | { type: "thinking"; delta: string }
+  | { type: "memory"; memory: CaseMemory }
   | { type: "safety"; safety: SafetyAssessment }
   | {
       type: "products";
@@ -103,6 +134,8 @@ export type ChatEvent =
       provisional: boolean;
       /** False when the catalog could not be reached. */
       databaseAvailable: boolean;
+      /** Queries that were executed against the database. */
+      queries?: string[];
     }
   | { type: "text"; delta: string }
   | { type: "error"; message: string }

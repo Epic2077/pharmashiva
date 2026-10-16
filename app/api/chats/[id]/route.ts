@@ -2,6 +2,8 @@ import type { NextRequest } from "next/server";
 
 import { generateChatTitle } from "@/lib/ai/chat-title";
 import type { ChatModel, ChatStatus } from "@/lib/chat/types";
+import type { CaseMemory } from "@/types/ai";
+import { coerceMemory } from "@/lib/chat/memory";
 import { deleteChat, getChat, updateChat } from "@/lib/chats/db";
 import { jsonError, readJson, requireUser, sameOrigin } from "@/lib/api/guard";
 
@@ -52,12 +54,13 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     icon?: string;
     status?: ChatStatus;
     model?: ChatModel;
+    memory?: CaseMemory;
   } = {};
 
-  if (
-    typeof body.status === "string" &&
-    STATUSES.includes(body.status as ChatStatus)
-  ) {
+  if (typeof body.status === "string") {
+    if (!STATUSES.includes(body.status as ChatStatus)) {
+      return jsonError("Unknown status", 400);
+    }
     patch.status = body.status as ChatStatus;
   }
   if (body.model === "flash" || body.model === "pro") {
@@ -68,6 +71,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
   }
   if (typeof body.title === "string" && body.title.trim()) {
     patch.title = body.title.trim().slice(0, 60);
+  }
+  if (body.memory !== undefined) {
+    patch.memory = coerceMemory(body.memory);
   }
 
   // Refine the title from the first message (best-effort, never blocks).

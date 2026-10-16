@@ -238,9 +238,15 @@ export function extractHeuristicFacts(message: string): CaseFacts {
     age,
     pregnancy,
     duration,
+    customerName: null,
     missingInformation: [],
     statedFacts: [],
     inferredFacts: [],
     searchTerms: buildSearchTerms(message, symptoms),
+    // The model is the only thing that turns a case into *product* queries
+    // (active ingredient / product class / category). Heuristics cannot, so they
+    // leave this empty rather than feeding the raw message to product search —
+    // which would match noise (e.g. "10" in "10/10") and bury the real products.
+    productQueries: [],
   };
 }

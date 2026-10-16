@@ -7,6 +7,7 @@ import type { DeepSeekMessage } from "@/lib/ai/deepseek.service";
 import { isLanguageCode, type LanguageCode } from "@/lib/i18n";
 import { getServerLanguage } from "@/lib/i18n-server";
 import type { ChatEvent } from "@/types/ai";
+import { getChatMemory, saveChatMemory } from "@/lib/chats/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -62,6 +63,12 @@ function readHistory(value: unknown): DeepSeekMessage[] {
   return items.slice(-MAX_HISTORY);
 }
 
+function isUuid(value: string): boolean {
+  return /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/.test(
+    value,
+  );
+}
+
 function publicError(error: unknown): string {
   if (error instanceof Error && error.name === "DeepSeekError") {
     return "The AI assistant is temporarily unavailable. Showing catalog and safety results.";
@@ -87,7 +94,8 @@ export async function POST(request: NextRequest) {
   }
 
   // Only signed-in users may spend the model budget.
-  if (!(await requireUser())) {
+  const user = await requireUser();
+  if (!user) {
     return jsonError("Unauthorized", 401);
   }
 
@@ -115,6 +123,10 @@ export async function POST(request: NextRequest) {
   if (!message) {
     return jsonError("A non-empty message is required", 400);
   }
+
+  const chatIdRaw = typeof record.chatId === "string" ? record.chatId.trim() : "";
+  const chatId = chatIdRaw && isUuid(chatIdRaw) ? chatIdRaw : null;
+  const memory = chatId ? await getChatMemory(user.id, chatId) : null;
 
   const history = readHistory(record.history);
   const requestedLanguage = record.language;
@@ -151,6 +163,16 @@ export async function POST(request: NextRequest) {
           signal,
           send,
           mode,
+          memory,
+          onMemory: async (updatedMemory) => {
+            if (chatId) {
+              try {
+                await saveChatMemory(user.id, chatId, updatedMemory);
+              } catch (error) {
+                console.error("[chat] failed to save memory:", error);
+              }
+            }
+          },
           log: (timings) => {
             // Latency only — never logs conversation content.
             console.info(

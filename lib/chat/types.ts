@@ -1,4 +1,8 @@
-import type { ProductRecommendation, SafetyAssessment } from "@/types/ai";
+import type {
+  CaseMemory,
+  ProductRecommendation,
+  SafetyAssessment,
+} from "@/types/ai";
 
 export type MessageRole = "user" | "assistant";
 
@@ -26,6 +30,8 @@ export interface Message {
   productsProvisional?: boolean;
   /** False when the catalog could not be reached. */
   productsDatabaseAvailable?: boolean;
+  /** Queries that were executed against the database. */
+  productsQueries?: string[];
   /** Fatal error for this turn. */
   error?: string | null;
   /** Set once the message has been written to Supabase. */
@@ -39,6 +45,8 @@ export interface Chat {
   icon: string;
   status: ChatStatus;
   model: ChatModel;
+  /** Accumulated case memory for this chat (see `lib/chat/memory.ts`). */
+  memory: CaseMemory;
   createdAt: number;
   updatedAt: number;
   messages: Message[];
@@ -53,6 +61,8 @@ export interface ChatSummary {
   icon: string;
   status: ChatStatus;
   model: ChatModel;
+  /** Accumulated case memory; `{}`-shaped when the chat is brand new. */
+  memory: CaseMemory;
   createdAt: string;
   updatedAt: string;
 }

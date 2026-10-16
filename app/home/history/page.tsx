@@ -5,7 +5,7 @@ import HistorySection, {
 } from "@/components/history/HistorySection";
 import { getSessionUser } from "@/lib/auth/session";
 import { listChats } from "@/lib/chats/db";
-import { formatChatDate } from "@/lib/chats/format";
+import { formatChatDate, formatChatTimestamp } from "@/lib/chats/format";
 
 export const dynamic = "force-dynamic";
 
@@ -22,6 +22,7 @@ export default async function HistoryPage() {
         icon: chat.icon,
         status: chat.status,
         date: formatChatDate(chat.updatedAt),
+        timestamp: formatChatTimestamp(chat.updatedAt),
       }));
     } catch (error) {
       console.error("[history] could not load chats:", error);

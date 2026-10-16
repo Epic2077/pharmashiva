@@ -91,7 +91,7 @@ export function ChatPreviewDialog({
     >
       <DialogContent
         showCloseButton={false}
-        className="max-h-[85dvh] w-[calc(100%-1.5rem)] max-w-md grid-rows-[auto_minmax(0,1fr)_auto] rounded-3xl p-0"
+        className="max-h-[85dvh] w-[calc(100%-1.5rem)] max-w-md grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden rounded-3xl p-0 sm:max-w-md"
       >
         <DialogHeader className="shrink-0 border-b border-border px-5 py-4 text-left">
           <div className="flex items-center gap-3">
@@ -117,8 +117,10 @@ export function ChatPreviewDialog({
           </div>
         </DialogHeader>
 
-        {/* ChatMessages owns its own scrolling, so the parent just bounds it. */}
-        <div className="min-h-0 flex-1 px-5">
+        {/* ChatMessages owns its own scrolling, so the parent just bounds it.
+            `px-4` + ChatMessages' own `px-1` lines message text up with the
+            header/footer padding (`px-5`). */}
+        <div className="min-h-0 flex-1 px-4">
           {chat ? (
             <ChatMessages messages={messages} isStreaming={false} />
           ) : (

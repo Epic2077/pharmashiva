@@ -1,6 +1,6 @@
-product suggestion is showing based on the name of what the user provided and not what they actually should be
+1 product suggestion is showing based on the name of what the user provided and not what they actually should be
 
-product cards in chat don't have ingredients.
+1 product cards in chat don't have ingredients.
 
 the safety information happens twice
 
@@ -17,3 +17,5 @@ Google signups don't work
 Profile editing should be implemented
 
 pfp should be able to be uploaded (if with google use google pfp)
+
+new variables for vercel

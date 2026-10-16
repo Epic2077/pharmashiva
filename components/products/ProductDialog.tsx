@@ -13,6 +13,7 @@ import {
 } from "@/components/animate-ui/components/radix/dialog";
 import { Button } from "@/components/ui/button";
 import { localizedName, type LanguageCode } from "@/lib/i18n";
+import { primaryProductImage } from "@/lib/product-images";
 import type { ProductDetails } from "@/types/database";
 
 interface ProductDialogProps {
@@ -41,7 +42,7 @@ export default function ProductDialog({
       : product.name_en && product.name_en !== name
         ? product.name_en
         : undefined;
-  const imageUrl = product.image_urls?.find((url) => url && url.trim());
+  const imageUrl = primaryProductImage(product.image_urls);
 
   // Same back-button behavior as the chat preview dialog: while open, the
   // dialog owns a history entry so Back closes it instead of leaving the page.

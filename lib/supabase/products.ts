@@ -248,6 +248,40 @@ export async function getPopularSearchTerms(limit = 8): Promise<string[]> {
     .map((entry) => entry.name);
 }
 
+/**
+ * Compact catalog vocabulary (categories + ingredients) to ground the model's
+ * product queries. Memoized in-process to avoid hammering the DB on every chat.
+ */
+interface CatalogVocabulary {
+  categories: string[];
+  ingredients: string[];
+}
+
+let vocabCache: CatalogVocabulary | null = null;
+let vocabFetchedAt = 0;
+
+export async function getCatalogVocabulary(limit = 60): Promise<CatalogVocabulary> {
+  const now = Date.now();
+  if (vocabCache && now - vocabFetchedAt < 10 * 60 * 1000) return vocabCache;
+
+  const sb = getSupabaseClient();
+  const { data, error } = await sb.rpc("catalog_vocabulary", { lim: limit });
+  if (error || !data) {
+    vocabCache = { categories: [], ingredients: [] };
+    vocabFetchedAt = now;
+    return vocabCache;
+  }
+
+  const row = Array.isArray(data) ? data[0] : data;
+  const vocab: CatalogVocabulary = {
+    categories: Array.isArray(row?.categories) ? row.categories.filter(Boolean) : [],
+    ingredients: Array.isArray(row?.ingredients) ? row.ingredients.filter(Boolean) : [],
+  };
+  vocabCache = vocab;
+  vocabFetchedAt = now;
+  return vocab;
+}
+
 /** Ranked search that returns full product rows. */
 export async function searchCatalog(
   query: string,
@@ -259,5 +293,28 @@ export async function searchCatalog(
   return results.flatMap((result) => {
     const product = productById.get(result.id);
     return product ? [{ rank: result.rank, product }] : [];
+  });
+}
+
+/** AI-driven search: uses `search_products_ai` (OR tokens, ingredient/category matches). */
+export async function searchCatalogAi(
+  query: string,
+  limit = 20,
+): Promise<ProductSearchHit[]> {
+  const sb = getSupabaseClient();
+  const { data, error } = await sb.rpc("search_products_ai", {
+    search_query: query,
+    result_limit: limit,
+  });
+  if (error) throw new Error(error.message);
+  const ids = (data ?? []).map((row: { id: string }) => row.id);
+  if (ids.length === 0) return [];
+  const products = await getProductsByIds(ids);
+  const productById = new Map(products.map((product) => [product.id, product]));
+  const byId = new Map((data ?? []).map((row: { id: string; rank: number }) => [row.id, row.rank]));
+  return ids.flatMap((id: string) => {
+    const product = productById.get(id);
+    const rank = byId.get(id);
+    return product && rank != null ? [{ rank, product }] : [];
   });
 }

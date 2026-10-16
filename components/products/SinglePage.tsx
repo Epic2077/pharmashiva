@@ -1,10 +1,12 @@
-import { ExternalLink, Package, Tag } from "lucide-react";
+import { ExternalLink, Tag } from "lucide-react";
 import Link from "next/link";
 import BackLink from "@/components/shared/BackLink";
 import ProductDescription from "@/components/products/ProductDescription";
+import ProductGallery from "@/components/products/ProductGallery";
 import { cn } from "@/lib/utils";
 import { localizedName, type LanguageCode } from "@/lib/i18n";
 import { localizeCategoryName } from "@/lib/i18n-server";
+import { productImages } from "@/lib/product-images";
 import type { ProductDetails } from "@/types/database";
 
 interface SinglePageProps {
@@ -43,7 +45,7 @@ export default async function SinglePage({
         ? product.name_en
         : undefined;
 
-  const images = (product.image_urls ?? []).filter((url) => url && url.trim());
+  const images = productImages(product.image_urls);
 
   const categories = await Promise.all(
     product.categories.map(async (category) => ({
@@ -67,35 +69,8 @@ export default async function SinglePage({
     <div className="flex flex-col gap-6 pt-2 pb-8">
       <BackLink title="Back to Products" />
 
-      {/* Hero image */}
-      <div className="overflow-hidden rounded-3xl border bg-muted/40">
-        {images[0] ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={images[0]}
-            alt={name}
-            className="mx-auto h-60 w-full object-contain p-4 sm:h-80"
-          />
-        ) : (
-          <div className="flex h-60 items-center justify-center text-muted-foreground sm:h-80">
-            <Package className="size-16" />
-          </div>
-        )}
-      </div>
-
-      {images.length > 1 ? (
-        <div className="flex gap-2 overflow-x-auto pb-1">
-          {images.map((url, index) => (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              key={`${url}-${index}`}
-              src={url}
-              alt={`${name} ${index + 1}`}
-              className="size-16 shrink-0 rounded-xl border bg-muted object-cover"
-            />
-          ))}
-        </div>
-      ) : null}
+      {/* Image gallery */}
+      <ProductGallery key={product.id} images={images} name={name} />
 
       {/* Title + price */}
       <div className="flex flex-col gap-3">

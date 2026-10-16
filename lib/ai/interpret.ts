@@ -6,10 +6,11 @@
  * the safety engine and product lookup always have input to work with.
  */
 
-import type { CaseFacts, CaseInterpretation } from "@/types/ai";
+import type { CaseFacts, CaseInterpretation, CaseMemory } from "@/types/ai";
 import { extractHeuristicFacts } from "./case-heuristics";
 import { isDeepSeekConfigured } from "./config";
 import { jsonChatCompletion, type DeepSeekMessage } from "./deepseek.service";
+import { getCatalogVocabulary } from "@/lib/supabase/products";
 import {
   buildInterpretUserPrompt,
   INTERPRET_SYSTEM_PROMPT,
@@ -66,6 +67,7 @@ export function parseCaseFacts(raw: unknown, fallback: CaseFacts): CaseFacts {
     age: asAge(record.age) ?? fallback.age,
     pregnancy: asBoolean(record.pregnancy) ?? fallback.pregnancy,
     duration: asString(record.duration) ?? fallback.duration,
+    customerName: asString(record.customerName) ?? fallback.customerName,
     missingInformation: asStringArray(record.missingInformation),
     statedFacts: asStringArray(record.statedFacts),
     inferredFacts: asStringArray(record.inferredFacts),
@@ -73,6 +75,10 @@ export function parseCaseFacts(raw: unknown, fallback: CaseFacts): CaseFacts {
       asStringArray(record.searchTerms, 4),
       fallback.searchTerms,
     ).slice(0, 4),
+    productQueries: unionUnique(
+      asStringArray(record.productQueries, 3),
+      fallback.productQueries,
+    ).slice(0, 3),
   };
 }
 
@@ -104,10 +110,15 @@ export function mergeCaseFacts(
     duration: model.duration ?? heuristic.duration,
     age: model.age ?? heuristic.age,
     pregnancy: model.pregnancy ?? heuristic.pregnancy,
+    customerName: model.customerName ?? heuristic.customerName,
     searchTerms: unionUnique(model.searchTerms, heuristic.searchTerms).slice(
       0,
       4,
     ),
+    productQueries: unionUnique(
+      model.productQueries,
+      heuristic.productQueries,
+    ).slice(0, 3),
   };
 }
 
@@ -119,6 +130,7 @@ export async function interpretCase(params: {
   message: string;
   history: DeepSeekMessage[];
   signal: AbortSignal;
+  memory?: CaseMemory | null;
 }): Promise<CaseInterpretation> {
   const heuristic = extractHeuristicFacts(params.message);
   const fallback: CaseInterpretation = {
@@ -130,12 +142,22 @@ export async function interpretCase(params: {
   if (!isDeepSeekConfigured()) return fallback;
 
   try {
+    const vocab = await getCatalogVocabulary(60);
+    const vocabStr = JSON.stringify({
+      categories: vocab.categories.slice(0, 40),
+      ingredients: vocab.ingredients.slice(0, 30),
+    });
     const raw = await jsonChatCompletion({
       messages: [
         { role: "system", content: INTERPRET_SYSTEM_PROMPT },
         {
           role: "user",
-          content: buildInterpretUserPrompt(params.message, params.history),
+          content: buildInterpretUserPrompt(
+            params.message,
+            params.history,
+            params.memory,
+            vocabStr,
+          ),
         },
       ],
       signal: params.signal,

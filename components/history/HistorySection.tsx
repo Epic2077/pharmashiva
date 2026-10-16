@@ -11,6 +11,8 @@ export interface HistoryEntry {
   title: string;
   /** Preformatted on the server so the list renders identically everywhere. */
   date: string;
+  /** Full date+time for the exact-time tooltip. */
+  timestamp: string;
   status: ChatStatus;
   icon: string;
 }
@@ -74,9 +76,11 @@ export default function HistorySection({
             <HistoryCard
               title={item.title}
               date={item.date}
+              timestamp={item.timestamp}
               icon={item.icon}
               status={item.status}
               chatId={item.id}
+              onChanged={() => router.refresh()}
             />
           </div>
         );

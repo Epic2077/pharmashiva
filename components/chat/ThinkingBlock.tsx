@@ -10,16 +10,17 @@ interface ThinkingBlockProps {
 }
 
 /**
- * Expandable thinking/reasoning block shown above assistant messages
- * when deep thinking was used. Starts expanded during streaming but
- * can be collapsed / expanded freely at any time.
+ * Expandable thinking/reasoning block shown above assistant messages.
+ * Collapsed by default and stays collapsed while streaming; the reasoning is
+ * only rendered once the user expands the block.
  */
 export default function ThinkingBlock({
   thinking,
   streaming = false,
 }: ThinkingBlockProps) {
-  // Default to open when streaming starts, user can toggle freely
-  const [isOpen, setIsOpen] = useState(streaming);
+  // Always start collapsed. The reasoning only renders (and only "streams")
+  // once the user explicitly expands the block.
+  const [isOpen, setIsOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   // Track whether the user has manually scrolled inside the thinking box
   const userScrolledRef = useRef(false);

@@ -20,10 +20,29 @@ export function formatChatDate(iso: string, now: Date = new Date()): string {
     minute: "2-digit",
   });
 
-  if (dayDiff <= 0) return `Today . ${time}`;
-  if (dayDiff === 1) return `Yesterday . ${time}`;
+  if (dayDiff <= 0) return `Today · ${time}`;
+  if (dayDiff === 1) return `Yesterday · ${time}`;
   if (dayDiff < 7) {
-    return `${date.toLocaleDateString("en-US", { weekday: "long" })} . ${time}`;
+    return `${date.toLocaleDateString("en-US", { weekday: "long" })} · ${time}`;
   }
-  return `${date.toLocaleDateString("en-US", { month: "short", day: "numeric" })} . ${time}`;
+  return `${date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  })} · ${time}`;
+}
+
+/**
+ * Full, unambiguous timestamp (date + time) used as the history card tooltip.
+ * Server-formatted so it cannot differ between server and client.
+ */
+export function formatChatTimestamp(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }

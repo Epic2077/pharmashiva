@@ -10,7 +10,7 @@
  * Nothing here calls the model, and nothing here can invent a product.
  */
 
-import { searchCatalog } from "@/lib/supabase";
+import { searchCatalog, searchCatalogAi } from "@/lib/supabase";
 import { localizeCategoryName } from "@/lib/i18n-server";
 import type { LanguageCode } from "@/lib/i18n";
 import type {
@@ -46,12 +46,14 @@ function ingredientNames(product: ProductDetails): string[] {
 }
 
 function buildQueries(facts: CaseFacts, message: string): string[] {
-  const raw = [
-    ...facts.searchTerms,
-    facts.goal ?? "",
-    facts.category ?? "",
-    message,
-  ];
+  // When the model produced product queries they are the *only* thing we search
+  // with: they are short product-class / ingredient / category phrases, whereas
+  // `searchTerms` is the customer's own sentence. Mixing the two would OR the
+  // sentence's noise tokens ("10", "has", "the") into the results.
+  const raw =
+    facts.productQueries.length > 0
+      ? [...facts.productQueries]
+      : [...facts.searchTerms, facts.goal ?? "", facts.category ?? ""];
   const seen = new Set<string>();
   const queries: string[] = [];
   for (const value of raw) {
@@ -62,6 +64,10 @@ function buildQueries(facts: CaseFacts, message: string): string[] {
     queries.push(trimmed.slice(0, 120));
     if (queries.length >= MAX_QUERIES) break;
   }
+  if (queries.length === 0) {
+    const fallback = message.trim().replace(/\s+/g, " ").slice(0, 120);
+    if (fallback) queries.push(fallback);
+  }
   return queries;
 }
 
@@ -70,13 +76,17 @@ function buildReason(
   facts: CaseFacts,
 ): string {
   const bits: string[] = [];
-  const term = facts.searchTerms[0] ?? facts.goal ?? facts.category;
+  const term =
+    facts.productQueries[0] ??
+    facts.searchTerms[0] ??
+    facts.goal ??
+    facts.category;
   if (term) bits.push(`Matches “${term.slice(0, 48)}”`);
   if (product.brand) bits.push(product.brand);
 
   const notable = product.ingredients
     .filter((ingredient) => ingredient.amount != null && ingredient.name)
-    .slice(0, 2)
+    .slice(0, 3)
     .map((ingredient) => `${ingredient.name} ${ingredient.amount}${ingredient.unit ?? ""}`)
     .join(", ");
   if (notable) bits.push(`contains ${notable}`);
@@ -140,8 +150,12 @@ export async function retrieveProducts(params: {
     return { products: [], databaseAvailable: true, queries: [] };
   }
 
+  // The AI engine is only appropriate for short product-class queries the model
+  // produced. The customer's own sentence goes through the site search instead.
+  const useAi = facts.productQueries.length > 0;
+  const searchFn = useAi ? searchCatalogAi : searchCatalog;
   const settled = await Promise.allSettled(
-    queries.map((query) => searchCatalog(query, PER_QUERY_LIMIT)),
+    queries.map((query) => searchFn(query, PER_QUERY_LIMIT)),
   );
 
   const databaseAvailable = settled.some(
@@ -229,4 +243,9 @@ export async function retrieveProducts(params: {
   void signal;
 
   return { products, databaseAvailable, queries };
+}
+
+/** Export for the pipeline to show what queries would have been used. */
+export function buildProductQueriesForFacts(facts: CaseFacts, message: string = ""): string[] {
+  return buildQueries(facts, message).slice(0, 3);
 }

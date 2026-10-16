@@ -4,12 +4,13 @@ import { useEffect, useRef, useState } from "react";
 import { Package, Tag } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { localizedName, type LanguageCode } from "@/lib/i18n";
+import { primaryProductImage } from "@/lib/product-images";
 import type { ProductDetails } from "@/types/database";
 import { Badge } from "../ui/badge";
 import { redirect } from "next/navigation";
 
 const HOLD_DURATION = 450;
-const MAX_VISIBLE_INGREDIENTS = 1;
+const MAX_VISIBLE_INGREDIENTS = 3;
 
 interface ProductCardProps {
   product: ProductDetails;
@@ -36,7 +37,7 @@ export default function ProductCard({
         ? product.name_en
         : undefined;
 
-  const imageUrl = product.image_urls?.find((url) => url && url.trim());
+  const imageUrl = primaryProductImage(product.image_urls);
 
   const [holding, setHolding] = useState(false);
   const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);

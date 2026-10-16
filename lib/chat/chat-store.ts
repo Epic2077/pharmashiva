@@ -110,6 +110,7 @@ function toChat(detail: ChatSummary | ChatDetail, messages: Message[] = []): Cha
     model: detail.model,
     createdAt: Date.parse(detail.createdAt),
     updatedAt: Date.parse(detail.updatedAt),
+    memory: detail.memory,
     messages,
     streaming: false,
   };
@@ -190,6 +191,12 @@ function applyEvent(chatId: string, messageId: string, event: ChatEvent) {
         status: STAGE_LABEL[event.stage] || null,
       });
       break;
+    case "memory":
+      updateChat(chatId, (chat) => ({
+        ...chat,
+        memory: event.memory,
+      }));
+      break;
     case "thinking":
       patchMessageFn(chatId, messageId, (message) => ({
         thinking: (message.thinking ?? "") + event.delta,
@@ -203,6 +210,7 @@ function applyEvent(chatId: string, messageId: string, event: ChatEvent) {
         products: event.products,
         productsProvisional: event.provisional,
         productsDatabaseAvailable: event.databaseAvailable,
+        productsQueries: event.queries,
       });
       break;
     case "text":
@@ -356,6 +364,7 @@ async function startStream(
         history,
         language: readClientLanguage(),
         mode: options.thinking ? "pro" : "flash",
+        chatId,
       }),
       signal: controller.signal,
     });

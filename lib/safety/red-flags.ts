@@ -24,8 +24,51 @@ interface RedFlagRule {
   label: string;
   /** Lower-cased substrings; any match fires the rule. */
   terms: string[];
+  /**
+   * Optional predicate for combination rules that need more than a substring
+   * match (for example a pain score together with a body location). Receives
+   * the lower-cased haystack.
+   */
+  test?: (text: string) => boolean;
   explanation: string;
   nextStep: string;
+}
+
+/** Normalise Persian/Arabic-Indic digits to ASCII so "۱۰/۱۰" is understood. */
+function normaliseDigits(text: string): string {
+  return text.replace(/[\u06f0-\u06f9\u0660-\u0669]/g, (digit) => {
+    const code = digit.charCodeAt(0);
+    const base = code >= 0x06f0 ? 0x06f0 : 0x0660;
+    return String(code - base);
+  });
+}
+
+/** Parse a pain score such as "10/10" or "10 out of 10"; null when absent. */
+function painScore(text: string): number | null {
+  const match = normaliseDigits(text).match(
+    /\b(\d{1,2})\s*(?:\/|out of)\s*10\b/,
+  );
+  if (!match) return null;
+  const value = Number(match[1]);
+  return Number.isFinite(value) && value >= 0 && value <= 10 ? value : null;
+}
+
+const EYE_TERMS =
+  /\b(?:eye|eyes|ocular|eyeball|cornea|vision|sight)\b|چشم|بینایی|قرنیه/i;
+const PAIN_TERMS =
+  /\b(?:pain|painful|hurts?|hurting|aching|ache|sore|soreness|discomfort)\b|درد|دردناک/i;
+const SEVERE_TERMS =
+  /\b(?:severe|severely|intense|intensely|extreme|extremely|unbearable|excruciating|agoni[sz]ing|intolerable|worst|killing me|really bad)\b|شدید|طاقت ?فرسا/i;
+
+/**
+ * A pain score of 8/10 or higher, or extreme pain wording, is treated as
+ * urgent regardless of the body part it is describing.
+ */
+function isSeverePain(text: string): boolean {
+  if (!PAIN_TERMS.test(text)) return false;
+  const score = painScore(text);
+  if (score !== null && score >= 8) return true;
+  return SEVERE_TERMS.test(text);
 }
 
 const RED_FLAG_RULES: RedFlagRule[] = [
@@ -258,6 +301,45 @@ const RED_FLAG_RULES: RedFlagRule[] = [
       "Fever in a very young infant (under about 3 months) requires urgent paediatric assessment.",
     nextStep: "Have the infant seen urgently today.",
   },
+  {
+    id: "severe-pain",
+    label: "very severe pain",
+    terms: [],
+    test: (text) => isSeverePain(text),
+    explanation:
+      "Pain rated 8/10 or higher, or described as unbearable or excruciating, needs urgent assessment.",
+    nextStep:
+      "Arrange urgent medical assessment today rather than relying on over-the-counter products alone.",
+  },
+  {
+    id: "eye-emergency",
+    label: "acute eye problem",
+    terms: [
+      "chemical in my eye",
+      "chemical in the eye",
+      "chemical burn",
+      "something in my eye",
+      "object in my eye",
+      "foreign body in my eye",
+      "eye injury",
+      "injured my eye",
+      "eye trauma",
+      "hit in the eye",
+      "sudden eye pain",
+      "can't open my eye",
+      "cannot open my eye",
+      "severe eye pain",
+      "eye pain is severe",
+      "سوختگی چشم",
+      "آسیب چشم",
+      "درد شدید چشم",
+    ],
+    test: (text) => EYE_TERMS.test(text) && isSeverePain(text),
+    explanation:
+      "Severe or sudden eye pain, an eye injury or chemical exposure can threaten sight (for example acute glaucoma, a corneal ulcer or a penetrating injury).",
+    nextStep:
+      "Refer for same-day emergency eye assessment; do not apply drops or ointments before the eye is examined.",
+  },
 ];
 
 function haystack(facts: CaseFacts, rawMessage: string): string {
@@ -312,8 +394,10 @@ export function assessSafety(
   rawMessage: string,
 ): SafetyAssessment {
   const text = haystack(facts, rawMessage);
-  const matched = RED_FLAG_RULES.filter((rule) =>
-    rule.terms.some((term) => text.includes(term)),
+  const matched = RED_FLAG_RULES.filter(
+    (rule) =>
+      rule.terms.some((term) => text.includes(term)) ||
+      rule.test?.(text) === true,
   );
 
   if (matched.length > 0) {
