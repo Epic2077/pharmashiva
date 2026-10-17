@@ -11,6 +11,7 @@ import {
 import { getServerLanguage, localizeCategoryName } from "@/lib/i18n-server";
 import type { CategoryWithCount } from "@/types/database";
 import SearchResults from "@/components/search/SearchResults";
+import RecentSearches from "@/components/search/RecentSearches";
 
 interface SearchPageProps {
   searchParams: Promise<{ q?: string }>;
@@ -85,6 +86,7 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
       >
         <SearchBar />
       </Suspense>
+      <RecentSearches />
       <PopularSearch searches={popularTerms} />
       <CategoriesSearch categories={categoryItems} />
     </div>

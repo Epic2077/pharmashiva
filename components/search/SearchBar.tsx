@@ -9,7 +9,8 @@ import {
   InputGroupButton,
   InputGroupInput,
 } from "../ui/input-group";
-import { Badge } from "../ui/badge";
+import { addRecentSearch } from "@/lib/search/recent";
+import { Badge } from "@/components/ui/badge";
 
 interface SearchBarProps {
   resultCount?: number;
@@ -36,6 +37,10 @@ export default function SearchBar({ resultCount }: SearchBarProps) {
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const q = value.trim();
+
+    if (q) {
+      addRecentSearch(q);
+    }
 
     // Dismiss the mobile keyboard once the search is triggered.
     if (document.activeElement instanceof HTMLElement) {
