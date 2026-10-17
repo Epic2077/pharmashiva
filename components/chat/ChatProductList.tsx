@@ -1,6 +1,6 @@
 "use client";
 
-import { Info, PackageSearch, TriangleAlert } from "lucide-react";
+import { Info, PackageSearch, ShieldOff, TriangleAlert } from "lucide-react";
 import ProductCardList from "@/components/products/ProductCardList";
 import type { LanguageCode } from "@/lib/i18n";
 import type { ProductRecommendation } from "@/types/ai";
@@ -10,10 +10,17 @@ interface ChatProductListProps {
   language: LanguageCode;
   provisional: boolean;
   databaseAvailable: boolean;
+  /** True when the backend (or a later safety escalation) withheld the cards. */
+  suppressed?: boolean;
+  /** Machine-readable or human reason for the suppression. */
+  gateReason?: string;
 }
 
 /** Localized display name for the "why" list (mirrors ProductCard logic). */
-function displayName(product: ProductRecommendation["product"], language: LanguageCode) {
+function displayName(
+  product: ProductRecommendation["product"],
+  language: LanguageCode,
+) {
   if (language === "fa") return product.name_fa || product.name;
   return product.name_en || product.name;
 }
@@ -27,11 +34,40 @@ export function ChatProductList({
   language,
   provisional,
   databaseAvailable,
+  suppressed = false,
+  gateReason,
 }: ChatProductListProps) {
+  if (suppressed) {
+    return (
+      <aside className="my-3 flex items-start gap-2 rounded-2xl border border-warning/30 bg-warning-background px-4 py-3 text-sm text-foreground/90">
+        <ShieldOff
+          size={16}
+          className="mt-0.5 shrink-0 text-warning"
+          aria-hidden="true"
+        />
+        <div>
+          <p className="font-medium">
+            Product suggestions are withheld for this concern.
+          </p>
+          {gateReason ? (
+            <p className="mt-1 text-xs text-muted-foreground">
+              The safety check above must be resolved before any product can be
+              suggested.
+            </p>
+          ) : null}
+        </div>
+      </aside>
+    );
+  }
+
   if (!databaseAvailable) {
     return (
       <aside className="my-3 flex items-start gap-2 rounded-2xl border border-warning/30 bg-warning-background px-4 py-3 text-sm text-foreground/90">
-        <Info size={16} className="mt-0.5 shrink-0 text-warning" aria-hidden="true" />
+        <Info
+          size={16}
+          className="mt-0.5 shrink-0 text-warning"
+          aria-hidden="true"
+        />
         <span>
           Product lookup is temporarily unavailable, so no products can be shown
           right now. The safety assessment above is unaffected.
@@ -57,12 +93,18 @@ export function ChatProductList({
     <section className="my-3">
       <div className="mb-2 flex items-center gap-2 px-1 text-sm font-semibold text-primary">
         <PackageSearch size={16} aria-hidden="true" />
-        <span>{provisional ? "Provisional products" : "Product suggestions"}</span>
+        <span>
+          {provisional ? "Provisional products" : "Product suggestions"}
+        </span>
       </div>
 
       {provisional ? (
         <p className="mb-2 flex items-start gap-2 rounded-xl border border-warning/30 bg-warning-background px-3 py-2 text-xs text-foreground/90">
-          <TriangleAlert size={14} className="mt-0.5 shrink-0 text-warning" aria-hidden="true" />
+          <TriangleAlert
+            size={14}
+            className="mt-0.5 shrink-0 text-warning"
+            aria-hidden="true"
+          />
           <span>
             Not yet recommended while the safety questions above remain
             unresolved.

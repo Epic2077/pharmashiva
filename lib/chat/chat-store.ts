@@ -1,8 +1,13 @@
 "use client";
 
 import { useSyncExternalStore } from "react";
-import { DEFAULT_LANGUAGE, isLanguageCode, type LanguageCode } from "@/lib/i18n";
+import {
+  DEFAULT_LANGUAGE,
+  isLanguageCode,
+  type LanguageCode,
+} from "@/lib/i18n";
 import type { ChatEvent, ChatStage } from "@/types/ai";
+import { coerceSafetyAssessment } from "@/lib/safety/red-flags";
 import type {
   Chat,
   ChatDetail,
@@ -101,7 +106,10 @@ function patchMessageFn(
   }));
 }
 
-function toChat(detail: ChatSummary | ChatDetail, messages: Message[] = []): Chat {
+function toChat(
+  detail: ChatSummary | ChatDetail,
+  messages: Message[] = [],
+): Chat {
   return {
     id: detail.id,
     title: detail.title,
@@ -124,7 +132,7 @@ function toMessage(dto: ChatMessageDto): Message {
     thinking: dto.thinking ?? undefined,
     thinkingStreaming: false,
     status: null,
-    safety: dto.safety ?? undefined,
+    safety: coerceSafetyAssessment(dto.safety) ?? undefined,
     products: dto.products ?? undefined,
     persisted: true,
   };
@@ -211,6 +219,8 @@ function applyEvent(chatId: string, messageId: string, event: ChatEvent) {
         productsProvisional: event.provisional,
         productsDatabaseAvailable: event.databaseAvailable,
         productsQueries: event.queries,
+        productsSuppressed: event.suppressed,
+        productsGateReason: event.gateReason,
       });
       break;
     case "text":
@@ -274,7 +284,9 @@ async function readNdjson(
 /** Finish a turn: drop an empty placeholder, clear flags, persist the reply. */
 function finalizeTurn(chatId: string, assistantId: string) {
   const chat = chats.get(chatId);
-  const assistant = chat?.messages.find((message) => message.id === assistantId);
+  const assistant = chat?.messages.find(
+    (message) => message.id === assistantId,
+  );
 
   updateChat(chatId, (current) => ({
     ...current,
@@ -390,7 +402,12 @@ async function startStream(
 
     const queued = queuedStreams.get(chatId)?.shift();
     if (queued && !controller.signal.aborted) {
-      void startStream(chatId, queued.assistantId, queued.prompt, queued.options);
+      void startStream(
+        chatId,
+        queued.assistantId,
+        queued.prompt,
+        queued.options,
+      );
     }
   }
 }

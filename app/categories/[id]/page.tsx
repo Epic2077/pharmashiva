@@ -1,109 +1,102 @@
-import { notFound } from "next/navigation";
-import { LayoutGrid, Pill } from "lucide-react";
+import Link from "next/link";
 import BackLink from "@/components/shared/BackLink";
-import CategoriesCard from "@/components/search/CategoriesCard";
 import ProductCardList from "@/components/products/ProductCardList";
+import { searchProducts } from "@/lib/darukade/service";
 import {
-  getCategoryAncestors,
-  getCategoryById,
-  getChildCategoriesWithProductCounts,
-  getProductsByCategory,
-} from "@/lib/supabase";
-import { getServerLanguage, localizeCategoryName } from "@/lib/i18n-server";
-import type {
-  Category,
-  CategoryWithCount,
-  ProductDetails,
-} from "@/types/database";
+  getCategoryTree,
+  findCategoryNodeById,
+  requestForCategoryNode,
+  type DarukadeCategoryNode,
+} from "@/lib/darukade/categories";
+import { getServerLanguage } from "@/lib/i18n-server";
+import type { ProductSearchHit } from "@/types/database";
 
 interface CategoryPageProps {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ q?: string }>;
 }
 
-async function safe<T>(promise: Promise<T>, fallback: T): Promise<T> {
-  try {
-    return await promise;
-  } catch (error) {
-    console.error("Supabase query failed:", error);
-    return fallback;
-  }
-}
-
-export default async function CategoryPage({ params }: CategoryPageProps) {
+export default async function CategoryPage({
+  params,
+  searchParams,
+}: CategoryPageProps) {
   const { id } = await params;
+  const { q } = await searchParams;
   const language = await getServerLanguage();
 
-  const category = await safe(getCategoryById(id), null);
-  if (!category) notFound();
+  let tree: DarukadeCategoryNode[] = [];
+  try {
+    tree = await getCategoryTree();
+  } catch (error) {
+    console.error("Category tree unavailable:", error);
+  }
 
-  const [ancestors, subcategories, products] = await Promise.all([
-    safe(getCategoryAncestors(id), [] as Category[]),
-    safe(getChildCategoriesWithProductCounts(id), [] as CategoryWithCount[]),
-    safe(getProductsByCategory(id, { limit: 60 }), [] as ProductDetails[]),
-  ]);
+  const node = findCategoryNodeById(tree, id);
+  const request = node ? requestForCategoryNode(node) : undefined;
 
-  // Category names are Persian-only in the DB, so localize (translate) them.
-  const title = await localizeCategoryName(category, language);
+  if (!node || !request || request.kind === "unsupported") {
+    return (
+      <div className="flex flex-col gap-6 pt-2">
+        <BackLink title="Category" subtitle="" link="/search" />
+        <p className="rounded-2xl border border-dashed border-border bg-card px-5 py-10 text-center text-sm text-muted-foreground">
+          This category is not in Darukade&apos;s current navigation, or cannot
+          be browsed through the product API.
+        </p>
+        <Link
+          href="/categories"
+          className="inline-flex w-fit rounded-2xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground"
+        >
+          All categories
+        </Link>
+      </div>
+    );
+  }
 
-  const breadcrumb = (
-    await Promise.all(
-      ancestors.map((ancestor) => localizeCategoryName(ancestor, language)),
-    )
-  ).join(" › ");
+  const query = q?.trim() ?? "";
+  const heading = query ? `“${query}” in ${node.title}` : node.title;
 
-  const subcategoryItems = await Promise.all(
-    subcategories.map(async (subcategory) => ({
-      ...subcategory,
-      title: await localizeCategoryName(subcategory, language),
-    })),
-  );
+  let products: ProductSearchHit[] = [];
+  let error: string | null = null;
+  try {
+    const outcome = await searchProducts(query, {
+      limit: 20,
+      detailLimit: 8,
+      budgetMs: 6_000,
+      category: request,
+    });
+    products = outcome.hits;
+  } catch (cause) {
+    error = cause instanceof Error ? cause.message : "Unknown error";
+  }
 
-  const productItems = await Promise.all(
-    products.map(async (product) => ({
-      product,
-      categoryName: product.categories[0]
-        ? await localizeCategoryName(product.categories[0], language)
-        : null,
-    })),
-  );
+  const items = products.map((hit) => ({
+    product: hit.product,
+    categoryName: null,
+  }));
 
   return (
     <div className="flex flex-col gap-6 pt-2">
-      <BackLink title={title} subtitle={breadcrumb} link="/search" />
-
-      {subcategories.length > 0 ? (
-        <section className="flex flex-col gap-3">
-          <div className="flex items-center gap-2 px-1">
-            <LayoutGrid className="size-4 text-primary" />
-            <h3 className="text-base font-semibold">Subcategories</h3>
-          </div>
-          {subcategoryItems.map((subcategory) => (
-            <CategoriesCard
-              key={subcategory.id}
-              icon={<Pill className="size-5" />}
-              title={subcategory.title}
-              count={subcategory.productCount}
-              href={`/categories/${subcategory.id}`}
-            />
-          ))}
-        </section>
-      ) : null}
+      <BackLink title={node.title} subtitle="Category" link="/search" />
 
       <section className="flex flex-col gap-3">
         <h3 className="px-1 text-base font-semibold">
-          Products
+          {heading}
           <span className="text-sm font-normal text-muted-foreground">
             {" "}
             ({products.length})
           </span>
         </h3>
 
-        {products.length === 0 ? (
+        {error ? (
+          <p className="rounded-2xl border border-destructive/30 bg-destructive/10 px-5 py-6 text-sm text-destructive">
+            Could not load this category from Darukade: {error}
+          </p>
+        ) : products.length === 0 ? (
           <p className="rounded-2xl border border-dashed border-border bg-card px-5 py-10 text-center text-sm text-muted-foreground">
-            No products found.
+            No products found in this category.
           </p>
         ) : (
-          <ProductCardList items={productItems} language={language} />
+          <ProductCardList items={items} language={language} />
         )}
       </section>
     </div>

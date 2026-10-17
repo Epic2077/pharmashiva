@@ -40,7 +40,7 @@ export default function BackLink({ title, subtitle, link }: BackLinkProps) {
             initial={{ opacity: 0, y: -4 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.2, ease: "easeOut" }}
-            className="truncate text-xl font-bold text-foreground"
+            className="text-xl font-bold text-foreground whitespace-nowrap truncate"
           >
             {title}
           </motion.p>

@@ -62,7 +62,9 @@ function toNumber(value: unknown): number | null {
 }
 
 /** Turn a site-relative URL into an absolute darukade.com URL. */
-export function absoluteUrl(pathOrUrl: string | null | undefined): string | null {
+export function absoluteUrl(
+  pathOrUrl: string | null | undefined,
+): string | null {
   if (!pathOrUrl) return null;
   try {
     return new URL(pathOrUrl, DARUKADE_ORIGIN).href;
@@ -131,7 +133,12 @@ export function normalizePrices(
   const discount = toNumber(discountCost);
   const pct = toNumber(discountPercent) ?? 0;
 
-  if (pct > 0 && original !== null && discount !== null && original > discount) {
+  if (
+    pct > 0 &&
+    original !== null &&
+    discount !== null &&
+    original > discount
+  ) {
     return { originalPrice: original, price: discount, discountPercent: pct };
   }
   return {
@@ -144,7 +151,9 @@ export function normalizePrices(
 /* ── Category / breadcrumb ──────────────────────────────────────── */
 
 /** Extract the numeric Darukade category id from a breadcrumb URL, if any. */
-export function categoryIdFromUrl(url: string | null | undefined): number | null {
+export function categoryIdFromUrl(
+  url: string | null | undefined,
+): number | null {
   if (!url) return null;
   const cParam = url.match(/[?&]c=(\d+)/);
   if (cParam) return Number.parseInt(cParam[1]!, 10);
@@ -161,7 +170,10 @@ const NON_CATEGORY_URLS = new Set(["/", "/products", ""]);
  * "home"/"products" roots.
  */
 export function categoriesFromBreadcrumb(
-  breadcrumb: Array<{ title?: string | null; url?: string | null }> | null | undefined,
+  breadcrumb:
+    | Array<{ title?: string | null; url?: string | null }>
+    | null
+    | undefined,
   productUrl?: string | null,
 ): NormalizedCategory[] {
   if (!breadcrumb || breadcrumb.length === 0) return [];
@@ -235,7 +247,9 @@ export interface ListingPage {
 }
 
 /** Normalize a `categoryMataData` listing payload. */
-export function normalizeListing(categoryMataData: RawCategoryMataData): ListingPage {
+export function normalizeListing(
+  categoryMataData: RawCategoryMataData,
+): ListingPage {
   const filters = categoryMataData.filters?.pages ?? null;
   return {
     products: (categoryMataData.products ?? []).map(normalizeListingProduct),
@@ -321,7 +335,9 @@ const RELATIONSHIP_KEYS: Array<[keyof RawSection2, RelationshipKind]> = [
   ["alternativeProducts", "alternative"],
 ];
 
-function normalizeRelationships(section2: RawSection2): NormalizedRelationship[] {
+function normalizeRelationships(
+  section2: RawSection2,
+): NormalizedRelationship[] {
   const out: NormalizedRelationship[] = [];
   for (const [key, kind] of RELATIONSHIP_KEYS) {
     const group = section2[key] as RawRelationshipGroup | null | undefined;
@@ -334,6 +350,12 @@ function normalizeRelationships(section2: RawSection2): NormalizedRelationship[]
         title: product.productName?.trim() || null,
         url: product.productURL ?? null,
         position: toNumber(product.rowIndex) ?? index,
+        image: product.image ?? null,
+        price: toNumber(product.cost),
+        originalPrice: toNumber(product.orginalCost),
+        storeState:
+          typeof product.storeState === "boolean" ? product.storeState : null,
+        brandName: product.brandName?.trim() || null,
       });
     });
   }
@@ -385,7 +407,8 @@ export function normalizeProduct(
   const breadcrumb = section1.breadCrumb ?? [];
   const productUrl = absoluteUrl(section1.productURL);
 
-  const descriptionHtml = section3?.description ?? section1.review?.content ?? null;
+  const descriptionHtml =
+    section3?.description ?? section1.review?.content ?? null;
   const expertReviewHtml = section3?.expertReview ?? null;
 
   const detail: Omit<NormalizedProductDetail, "contentHash"> = {
@@ -396,6 +419,7 @@ export function normalizeProduct(
     nameFa: (section1.faName ?? "").trim(),
     nameEn: section1.enName?.trim() || null,
     brand: section1.brandEnName?.trim() || null,
+    brandFa: section1.brandFaName?.trim() || null,
     brandUrl: section1.brandURL ?? null,
     image: images[0] ?? null,
     images,
@@ -414,7 +438,10 @@ export function normalizeProduct(
     quickBuy: false,
     freeDelivery: false,
     isAd: false,
-    categories: categoriesFromBreadcrumb(breadcrumb, section1.productURL ?? null),
+    categories: categoriesFromBreadcrumb(
+      breadcrumb,
+      section1.productURL ?? null,
+    ),
     variants,
     ingredients: (section2?.ingredients ?? [])
       .map(normalizeIngredient)

@@ -195,6 +195,26 @@ export interface RawProductMataData {
   pid?: string | null;
 }
 
+/* ── Raw: homepage header navigation (category hierarchy) ──────── */
+
+/** One node of the `headerFooterData.header.menus` navigation tree. */
+export interface RawMenuNode {
+  id?: number | null;
+  title?: string | null;
+  url?: string | null;
+  icon?: string | null;
+  rowIndex?: number | null;
+  childs?: RawMenuNode[] | null;
+}
+
+export interface RawHeaderData {
+  menus?: RawMenuNode[] | null;
+}
+
+export interface RawHeaderFooterData {
+  header?: RawHeaderData | null;
+}
+
 /* ── Normalized ─────────────────────────────────────────────────── */
 
 /**
@@ -262,6 +282,56 @@ export interface NormalizedRelationship {
   title: string | null;
   url: string | null;
   position: number;
+  /** Source-provided listing fields for compact related-product cards. */
+  image: string | null;
+  price: number | null;
+  originalPrice: number | null;
+  storeState: boolean | null;
+  brandName: string | null;
+}
+
+/**
+ * One category from the source's own navigation tree (`header.menus`),
+ * verified against the site rather than guessed.
+ */
+export interface DarukadeCategoryNode {
+  /** Source menu node id. */
+  id: number | null;
+  /** Persian title as published by the source. */
+  title: string;
+  /** Site-relative URL of the category page. */
+  url: string;
+  /** Parent menu node id, when nested. */
+  parentId: number | null;
+  /** Depth in the tree (0 = top-level menu). */
+  depth: number;
+  children: DarukadeCategoryNode[];
+}
+
+/**
+ * How a category node maps onto a source listing request.
+ * Only parameter kinds the source has been verified to support are used.
+ */
+export type CategoryRequestKind =
+  /** `/products?c={id}` top-level category. */
+  | "category"
+  /** `/products/{slug}` category page. */
+  | "path"
+  /** `/products?g=...&ty=...` filter parameters. */
+  | "filters"
+  /** No source-side constraint is expressible for this node. */
+  | "unsupported";
+
+export interface CategoryRequest {
+  kind: CategoryRequestKind;
+  /** Numeric top-level category id for `kind: "category"`. */
+  categoryId?: string;
+  /** Slug path for `kind: "path"`, e.g. `supplement-creatine-171`. */
+  path?: string;
+  /** Extra verified filter params (`g`, `ty`) that combine with search. */
+  extra?: Record<string, string>;
+  /** `tl` refinements the source ignores during search, if any were dropped. */
+  droppedRefinement?: string | null;
 }
 
 export interface NormalizedProductSummary {
@@ -293,6 +363,7 @@ export interface NormalizedProductDetail extends NormalizedProductSummary {
   masterId: number | null;
   productCode: string | null;
   nameEn: string | null;
+  brandFa: string | null;
   reviewCount: number | null;
   viewCount: string | null;
   categories: NormalizedCategory[];

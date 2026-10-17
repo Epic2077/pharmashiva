@@ -6,15 +6,17 @@
  * the safety engine and product lookup always have input to work with.
  */
 
-import type { CaseFacts, CaseInterpretation, CaseMemory } from "@/types/ai";
+import type {
+  CaseFacts,
+  CaseInterpretation,
+  CaseMemory,
+  ModelSafetyConcern,
+} from "@/types/ai";
 import { extractHeuristicFacts } from "./case-heuristics";
 import { isDeepSeekConfigured } from "./config";
 import { jsonChatCompletion, type DeepSeekMessage } from "./deepseek.service";
-import { getCatalogVocabulary } from "@/lib/supabase/products";
-import {
-  buildInterpretUserPrompt,
-  INTERPRET_SYSTEM_PROMPT,
-} from "./prompts";
+import { getCategoryTree, categoryVocabulary } from "@/lib/darukade/categories";
+import { buildInterpretUserPrompt, INTERPRET_SYSTEM_PROMPT } from "./prompts";
 
 function asString(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -58,10 +60,7 @@ export function parseCaseFacts(raw: unknown, fallback: CaseFacts): CaseFacts {
     symptoms: unionUnique(fallback.symptoms, asStringArray(record.symptoms)),
     goal: asString(record.goal) ?? fallback.goal,
     category: asString(record.category) ?? fallback.category,
-    allergies: unionUnique(
-      fallback.allergies,
-      asStringArray(record.allergies),
-    ),
+    allergies: unionUnique(fallback.allergies, asStringArray(record.allergies)),
     conditions: asStringArray(record.conditions),
     medications: asStringArray(record.medications),
     age: asAge(record.age) ?? fallback.age,
@@ -92,6 +91,49 @@ function unionUnique(a: string[], b: string[]): string[] {
     out.push(value);
   }
   return out;
+}
+
+/**
+ * Coerce the untrusted `safetyConcerns` model field. Anything malformed is
+ * dropped; the caller escalates the deterministic assessment with these, so
+ * they can never widen product permission by themselves.
+ */
+export function parseSafetyConcerns(raw: unknown): ModelSafetyConcern[] {
+  if (!raw || typeof raw !== "object") return [];
+  const record = raw as Record<string, unknown>;
+  const list = record.safetyConcerns;
+  if (!Array.isArray(list)) return [];
+
+  const out: ModelSafetyConcern[] = [];
+  for (const item of list) {
+    if (!item || typeof item !== "object") continue;
+    const entry = item as Record<string, unknown>;
+    const severity = entry.severity;
+    const reason = asString(entry.reason);
+    if (
+      (severity !== "emergency" &&
+        severity !== "urgent" &&
+        severity !== "caution") ||
+      !reason
+    ) {
+      continue;
+    }
+    out.push({ severity, reason: reason.slice(0, 200) });
+    if (out.length >= 4) break;
+  }
+  return out;
+}
+
+/**
+ * Coerce the untrusted `followUpQuestions` model field. Short strings only;
+ * anything else is dropped (the deterministic protocol questions remain the
+ * mandatory floor).
+ */
+export function parseFollowUpQuestions(raw: unknown): string[] {
+  if (!raw || typeof raw !== "object") return [];
+  const record = raw as Record<string, unknown>;
+  if (!Array.isArray(record.followUpQuestions)) return [];
+  return asStringArray(record.followUpQuestions, 5);
 }
 
 /** Merge heuristic facts (instant) with model facts (richer). */
@@ -137,12 +179,15 @@ export async function interpretCase(params: {
     facts: heuristic,
     reasoning: [],
     fallback: true,
+    safetyConcerns: [],
+    followUpQuestions: [],
   };
 
   if (!isDeepSeekConfigured()) return fallback;
 
   try {
-    const vocab = await getCatalogVocabulary(60);
+    // Verified category vocabulary from Darukade's own navigation tree.
+    const vocab = categoryVocabulary(await getCategoryTree(), 60);
     const vocabStr = JSON.stringify({
       categories: vocab.categories.slice(0, 40),
       ingredients: vocab.ingredients.slice(0, 30),
@@ -164,7 +209,13 @@ export async function interpretCase(params: {
     });
 
     const facts = parseCaseFacts(raw, heuristic);
-    return { facts, reasoning: [], fallback: false };
+    return {
+      facts,
+      reasoning: [],
+      fallback: false,
+      safetyConcerns: parseSafetyConcerns(raw),
+      followUpQuestions: parseFollowUpQuestions(raw),
+    };
   } catch {
     // Never let interpretation failure block safety or retrieval.
     return fallback;

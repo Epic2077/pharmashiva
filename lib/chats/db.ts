@@ -6,9 +6,14 @@ import type {
   ChatStatus,
   ChatSummary,
 } from "@/lib/chat/types";
-import type { CaseMemory, ProductRecommendation, SafetyAssessment } from "@/types/ai";
+import type {
+  CaseMemory,
+  ProductRecommendation,
+  SafetyAssessment,
+} from "@/types/ai";
 import { getSupabaseClient } from "@/lib/supabase/server";
 import { coerceMemory } from "@/lib/chat/memory";
+import { coerceSafetyAssessment } from "@/lib/safety/red-flags";
 
 /**
  * Server-only data access for chats and messages.
@@ -74,7 +79,7 @@ function mapMessage(row: MessageRow): ChatMessageDto {
     role: row.role === "assistant" ? "assistant" : "user",
     content: row.content ?? "",
     thinking: row.thinking ?? null,
-    safety: (row.safety ?? null) as SafetyAssessment | null,
+    safety: coerceSafetyAssessment(row.safety),
     products: (row.products ?? null) as ProductRecommendation[] | null,
     createdAt: row.created_at,
   };
@@ -211,7 +216,13 @@ export async function appendChatMessage(
 export async function updateChat(
   userId: string,
   chatId: string,
-  patch: { title?: string; icon?: string; status?: ChatStatus; model?: ChatModel; memory?: CaseMemory },
+  patch: {
+    title?: string;
+    icon?: string;
+    status?: ChatStatus;
+    model?: ChatModel;
+    memory?: CaseMemory;
+  },
 ): Promise<ChatSummary | null> {
   const update: Record<string, unknown> = {};
   if (typeof patch.title === "string") update.title = patch.title;

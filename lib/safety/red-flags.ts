@@ -2,345 +2,35 @@
  * Deterministic red-flag safety engine.
  *
  * This is deliberately rule-based and independent of any language model. The
- * model may *explain* the assessment, but it can never override or downgrade it.
+ * model may *explain* the assessment, but it can never override or downgrade
+ * it. The ruleset lives in `./rules.ts` and is version-controlled; the
+ * assessment produced here is fully structured (`level`,
+ * `recommendationPermission`, …) so the pipeline can enforce the product gate
+ * in code instead of relying on prompt wording.
  *
- * States:
- *   HIGH_RISK   — a concerning feature needs urgent evaluation or referral.
- *   UNRESOLVED  — important safety information is still missing.
- *   LOWER_RISK  — no high-risk feature identified from the available facts
- *                 (this is NOT a diagnosis and NOT a guarantee of safety).
+ * The function is synchronous and performs no IO, so it can never time out or
+ * fail silently: an unexpected internal error falls back to a conservative
+ * "insufficient_information / restricted" assessment.
  */
 
 import type {
   CaseFacts,
+  ModelSafetyConcern,
+  ProductGateDecision,
+  RecommendationPermission,
   SafetyAssessment,
+  SafetyLevel,
   SafetySeverity,
   SafetyStatus,
 } from "@/types/ai";
-
-interface RedFlagRule {
-  id: string;
-  /** Human label used in the explanation. */
-  label: string;
-  /** Lower-cased substrings; any match fires the rule. */
-  terms: string[];
-  /**
-   * Optional predicate for combination rules that need more than a substring
-   * match (for example a pain score together with a body location). Receives
-   * the lower-cased haystack.
-   */
-  test?: (text: string) => boolean;
-  explanation: string;
-  nextStep: string;
-}
-
-/** Normalise Persian/Arabic-Indic digits to ASCII so "۱۰/۱۰" is understood. */
-function normaliseDigits(text: string): string {
-  return text.replace(/[\u06f0-\u06f9\u0660-\u0669]/g, (digit) => {
-    const code = digit.charCodeAt(0);
-    const base = code >= 0x06f0 ? 0x06f0 : 0x0660;
-    return String(code - base);
-  });
-}
-
-/** Parse a pain score such as "10/10" or "10 out of 10"; null when absent. */
-function painScore(text: string): number | null {
-  const match = normaliseDigits(text).match(
-    /\b(\d{1,2})\s*(?:\/|out of)\s*10\b/,
-  );
-  if (!match) return null;
-  const value = Number(match[1]);
-  return Number.isFinite(value) && value >= 0 && value <= 10 ? value : null;
-}
-
-const EYE_TERMS =
-  /\b(?:eye|eyes|ocular|eyeball|cornea|vision|sight)\b|چشم|بینایی|قرنیه/i;
-const PAIN_TERMS =
-  /\b(?:pain|painful|hurts?|hurting|aching|ache|sore|soreness|discomfort)\b|درد|دردناک/i;
-const SEVERE_TERMS =
-  /\b(?:severe|severely|intense|intensely|extreme|extremely|unbearable|excruciating|agoni[sz]ing|intolerable|worst|killing me|really bad)\b|شدید|طاقت ?فرسا/i;
-
-/**
- * A pain score of 8/10 or higher, or extreme pain wording, is treated as
- * urgent regardless of the body part it is describing.
- */
-function isSeverePain(text: string): boolean {
-  if (!PAIN_TERMS.test(text)) return false;
-  const score = painScore(text);
-  if (score !== null && score >= 8) return true;
-  return SEVERE_TERMS.test(text);
-}
-
-const RED_FLAG_RULES: RedFlagRule[] = [
-  {
-    id: "cardiac",
-    label: "possible cardiac event",
-    terms: [
-      "chest pain",
-      "chest pressure",
-      "chest tightness",
-      "pain in my chest",
-      "pain radiating to my arm",
-      "pain to the arm",
-      "pain to the jaw",
-      "درد قفسه سینه",
-      "درد سینه",
-    ],
-    explanation:
-      "Chest pain or pressure can indicate a heart attack or another cardiac emergency.",
-    nextStep:
-      "Call emergency services now. Do not wait to see whether it settles.",
-  },
-  {
-    id: "breathing",
-    label: "breathing difficulty",
-    terms: [
-      "difficulty breathing",
-      "trouble breathing",
-      "shortness of breath",
-      "short of breath",
-      "can't breathe",
-      "cannot breathe",
-      "wheezing",
-      "تنگی نفس",
-      "تنفس مشکل",
-    ],
-    explanation:
-      "Difficulty breathing is an emergency symptom that needs immediate assessment.",
-    nextStep: "Seek emergency care immediately.",
-  },
-  {
-    id: "anaphylaxis",
-    label: "possible severe allergic reaction",
-    terms: [
-      "throat swelling",
-      "swollen throat",
-      "swelling of the throat",
-      "swollen lips",
-      "swollen tongue",
-      "swelling of the face",
-      "face swelling",
-      "hives and trouble breathing",
-      "anaphylaxis",
-      "خفگی",
-      "تورم گلو",
-      "تورم لب",
-    ],
-    explanation:
-      "Swelling of the face, lips, tongue or throat with breathing difficulty suggests a severe allergic reaction (anaphylaxis).",
-    nextStep:
-      "Use an adrenaline auto-injector if available and call emergency services now.",
-  },
-  {
-    id: "stroke",
-    label: "possible stroke",
-    terms: [
-      "slurred speech",
-      "can't speak",
-      "face drooping",
-      "facial droop",
-      "weakness on one side",
-      "numbness on one side",
-      "sudden confusion",
-      "sudden vision loss",
-      "loss of vision",
-      "لکنت",
-      "بی حسی یک طرفه",
-      "فلج",
-    ],
-    explanation:
-      "Sudden weakness, numbness, speech difficulty or vision loss can indicate a stroke.",
-    nextStep:
-      "Call emergency services immediately — stroke treatment is time-critical.",
-  },
-  {
-    id: "severe-headache",
-    label: "sudden severe headache",
-    terms: [
-      "worst headache",
-      "worst headache of my life",
-      "sudden severe headache",
-      "thunderclap headache",
-      "headache with stiff neck",
-      "سردرد شدید",
-    ],
-    explanation:
-      "A sudden, severe or 'worst ever' headache can signal bleeding around the brain or meningitis.",
-    nextStep: "Go to an emergency department now.",
-  },
-  {
-    id: "bleeding",
-    label: "possible internal bleeding",
-    terms: [
-      "vomiting blood",
-      "vomited blood",
-      "coughing blood",
-      "coughing up blood",
-      "blood in stool",
-      "bloody stool",
-      "black tarry stool",
-      "black stool",
-      "uncontrolled bleeding",
-      "won't stop bleeding",
-      "خون استفراغ",
-      "خون در مدفوع",
-      "خونریزی",
-    ],
-    explanation:
-      "Vomiting or coughing blood, or black/bloody stools, can indicate significant bleeding.",
-    nextStep: "Go to an emergency department immediately.",
-  },
-  {
-    id: "neurological",
-    label: "loss of consciousness or seizure",
-    terms: [
-      "seizure",
-      "convulsion",
-      "fainted",
-      "passed out",
-      "unconscious",
-      "loss of consciousness",
-      "تشنج",
-      "غش",
-      "بیهوش",
-    ],
-    explanation:
-      "A seizure, fainting or loss of consciousness needs urgent medical evaluation.",
-    nextStep: "Call emergency services or go to an emergency department.",
-  },
-  {
-    id: "abdominal-emergency",
-    label: "severe abdominal pain",
-    terms: [
-      "severe abdominal pain",
-      "severe stomach pain",
-      "excruciating stomach pain",
-      "rigid abdomen",
-      "stomach is hard",
-      "درد شدید شکم",
-      "درد شدید معده",
-    ],
-    explanation:
-      "Severe or rigid abdominal pain can indicate a surgical emergency such as appendicitis or perforation.",
-    nextStep: "Seek emergency care immediately.",
-  },
-  {
-    id: "meningitis",
-    label: "fever with neck stiffness",
-    terms: [
-      "stiff neck and fever",
-      "fever and stiff neck",
-      "fever with rash",
-      "neck stiffness",
-      "خشکی گردن",
-    ],
-    explanation:
-      "Fever with neck stiffness or a non-blanching rash can indicate meningitis or another serious infection.",
-    nextStep: "Seek emergency care immediately.",
-  },
-  {
-    id: "overdose",
-    label: "possible overdose or poisoning",
-    terms: [
-      "overdose",
-      "took too many",
-      "too many pills",
-      "poisoning",
-      "swallowed bleach",
-      "مسمومیت",
-      "مصرف بیش از حد",
-    ],
-    explanation:
-      "A suspected overdose or poisoning is a time-critical emergency.",
-    nextStep:
-      "Call emergency services or a poison control centre immediately and keep the packaging.",
-  },
-  {
-    id: "self-harm",
-    label: "risk of self-harm",
-    terms: [
-      "suicidal",
-      "suicide",
-      "want to die",
-      "end my life",
-      "self harm",
-      "خودکشی",
-    ],
-    explanation:
-      "Thoughts of self-harm require immediate, compassionate professional support.",
-    nextStep:
-      "Contact emergency services or a crisis helpline now and stay with the person.",
-  },
-  {
-    id: "pregnancy-emergency",
-    label: "pregnancy warning sign",
-    terms: [
-      "pregnant and bleeding",
-      "pregnancy bleeding",
-      "no fetal movement",
-      "no baby movement",
-      "severe pain during pregnancy",
-      "خونریزی بارداری",
-    ],
-    explanation:
-      "Bleeding, severe pain or reduced fetal movement in pregnancy needs urgent obstetric review.",
-    nextStep: "Contact the maternity unit or emergency services immediately.",
-  },
-  {
-    id: "infant-fever",
-    label: "young infant with fever",
-    terms: [
-      "newborn fever",
-      "baby fever",
-      "infant fever",
-      "3 week old with fever",
-      "2 month old with fever",
-      "تب نوزاد",
-    ],
-    explanation:
-      "Fever in a very young infant (under about 3 months) requires urgent paediatric assessment.",
-    nextStep: "Have the infant seen urgently today.",
-  },
-  {
-    id: "severe-pain",
-    label: "very severe pain",
-    terms: [],
-    test: (text) => isSeverePain(text),
-    explanation:
-      "Pain rated 8/10 or higher, or described as unbearable or excruciating, needs urgent assessment.",
-    nextStep:
-      "Arrange urgent medical assessment today rather than relying on over-the-counter products alone.",
-  },
-  {
-    id: "eye-emergency",
-    label: "acute eye problem",
-    terms: [
-      "chemical in my eye",
-      "chemical in the eye",
-      "chemical burn",
-      "something in my eye",
-      "object in my eye",
-      "foreign body in my eye",
-      "eye injury",
-      "injured my eye",
-      "eye trauma",
-      "hit in the eye",
-      "sudden eye pain",
-      "can't open my eye",
-      "cannot open my eye",
-      "severe eye pain",
-      "eye pain is severe",
-      "سوختگی چشم",
-      "آسیب چشم",
-      "درد شدید چشم",
-    ],
-    test: (text) => EYE_TERMS.test(text) && isSeverePain(text),
-    explanation:
-      "Severe or sudden eye pain, an eye injury or chemical exposure can threaten sight (for example acute glaucoma, a corneal ulcer or a penetrating injury).",
-    nextStep:
-      "Refer for same-day emergency eye assessment; do not apply drops or ointments before the eye is examined.",
-  },
-];
+import {
+  CAUTION_FOLLOW_UPS,
+  CAUTION_RULES,
+  EMERGENCY_AND_URGENT_RULES,
+  SAFETY_RULESET_VERSION,
+  eyeRednessResolved,
+  type RedFlagRule,
+} from "./rules.ts";
 
 function haystack(facts: CaseFacts, rawMessage: string): string {
   return [
@@ -358,7 +48,25 @@ function isCustomerCase(facts: CaseFacts): boolean {
   return facts.symptoms.length > 0;
 }
 
-function buildQuestions(facts: CaseFacts): string[] {
+/** Product/shopping vocabulary that makes a message a concrete request. */
+const SHOPPING_VOCAB =
+  /\b(?:want|need|looking for|recommend|suggest|product|cream|serum|moisturizer|moisturiser|lotion|shampoo|supplement|vitamin|drops|tablet|capsule|gel|mask|oil|spray)\b|میخواهم|میخوام|دنبال|محصول|کرم|سرم|مرطوب|مکمل|ویتامین|شامپو|قرص|کپسول|ژل|ماسک|قطره|روغن|اسپری/i;
+
+/**
+ * "Recommend a supplement for my symptom" names a symptom but no concrete
+ * problem or product class — too vague to act on safely.
+ */
+function isVagueSymptomRequest(text: string, facts: CaseFacts): boolean {
+  if (!/\bsymptom\b|علائم?/i.test(text)) return false;
+  if (facts.symptoms.length > 0 || facts.productQueries.length > 0) {
+    return false;
+  }
+  const concreteClass =
+    /\b(?:cream|serum|moisturizer|moisturiser|lotion|shampoo|gel|mask|drops|tablet|capsule|oil|spray|soap|toner|sunscreen|ointment)\b|کرم|سرم|مرطوب|شامپو|ژل|ماسک|قطره|قرص|کپسول|روغن|اسپری|صابون|ضدآفتاب|پماد/i;
+  return !concreteClass.test(text);
+}
+
+function buildGenericQuestions(facts: CaseFacts): string[] {
   const questions: string[] = [];
   if (!facts.duration) questions.push("How long has this been going on?");
   if (facts.symptoms.length > 0) {
@@ -374,15 +82,90 @@ function buildQuestions(facts: CaseFacts): string[] {
     );
   }
   if (facts.allergies.length === 0) {
-    questions.push("Does the customer have any known allergies or ingredient sensitivities?");
+    questions.push(
+      "Does the customer have any known allergies or ingredient sensitivities?",
+    );
   }
   return questions.slice(0, 5);
 }
 
-function severityFor(status: SafetyStatus): SafetySeverity {
-  if (status === "HIGH_RISK") return "critical";
-  if (status === "UNRESOLVED") return "warning";
-  return "info";
+function severityForLevel(level: SafetyLevel): SafetySeverity {
+  if (level === "emergency" || level === "urgent") return "critical";
+  if (level === "routine") return "info";
+  return "warning";
+}
+
+function statusForLevel(level: SafetyLevel): SafetyStatus {
+  if (level === "emergency" || level === "urgent") return "HIGH_RISK";
+  if (level === "routine") return "LOWER_RISK";
+  return "UNRESOLVED";
+}
+
+function permissionForLevel(level: SafetyLevel): RecommendationPermission {
+  if (level === "emergency" || level === "urgent") return "blocked";
+  // Caution shows suggestions (flagged provisional) so the pharmacist can
+  // work fast while the alert questions remain open.
+  if (level === "caution" || level === "routine") return "allowed";
+  return "restricted"; // insufficient_information
+}
+
+/**
+ * Conservative assessment used when the engine itself misbehaves. It must
+ * never allow product recommendations.
+ */
+function safeFallbackAssessment(): SafetyAssessment {
+  return buildAssessment({
+    level: "insufficient_information",
+    redFlags: [],
+    caution: [],
+    reasons: [
+      "The safety assessment could not be completed; product recommendations are withheld as a precaution.",
+    ],
+    followUpQuestions: [],
+    nextSteps: [
+      "Review the case carefully and seek professional advice before making any suggestion.",
+    ],
+    explanation:
+      "The safety assessment could not be completed. Please review the case carefully before making any suggestion.",
+    title: "Safety assessment unavailable",
+  });
+}
+
+interface AssessmentInput {
+  level: SafetyLevel;
+  redFlags: RedFlagRule[];
+  caution: RedFlagRule[];
+  reasons: string[];
+  followUpQuestions: string[];
+  nextSteps: string[];
+  explanation: string;
+  title: string;
+}
+
+function buildAssessment(input: AssessmentInput): SafetyAssessment {
+  const { level } = input;
+  const requiresProfessionalEvaluation =
+    level === "emergency" || level === "urgent";
+  return {
+    status: statusForLevel(level),
+    severity: severityForLevel(level),
+    title: input.title,
+    explanation: input.explanation,
+    // Legacy aliases, kept populated so existing UI and persisted messages
+    // continue to render without changes.
+    questions: input.followUpQuestions,
+    nextSteps: input.nextSteps,
+    triggers: [...input.redFlags, ...input.caution].map((rule) => rule.id),
+    level,
+    recommendationPermission: permissionForLevel(level),
+    detectedRedFlags: input.redFlags.map((rule) => rule.id),
+    reasons: input.reasons,
+    followUpQuestions: input.followUpQuestions,
+    recommendedNextStep: input.nextSteps[0] ?? null,
+    requiresProfessionalEvaluation,
+    rulesetVersion: SAFETY_RULESET_VERSION,
+    modelConcerns: [],
+  };
 }
 
 /**
@@ -393,53 +176,490 @@ export function assessSafety(
   facts: CaseFacts,
   rawMessage: string,
 ): SafetyAssessment {
-  const text = haystack(facts, rawMessage);
-  const matched = RED_FLAG_RULES.filter(
-    (rule) =>
-      rule.terms.some((term) => text.includes(term)) ||
-      rule.test?.(text) === true,
-  );
+  try {
+    const text = haystack(facts, rawMessage);
 
-  if (matched.length > 0) {
-    const status: SafetyStatus = "HIGH_RISK";
+    const redFlags = EMERGENCY_AND_URGENT_RULES.filter(
+      (rule) =>
+        rule.terms.some((term) => text.includes(term)) ||
+        rule.test?.(text) === true,
+    );
+
+    // Caution rules only apply when nothing more serious fired.
+    const caution =
+      redFlags.length === 0
+        ? CAUTION_RULES.filter(
+            (rule) =>
+              rule.terms.some((term) => text.includes(term)) ||
+              rule.test?.(text) === true,
+          )
+        : [];
+
+    // The pharmacist answered the eye protocol with negations (no pain, no
+    // vision change, no lenses, …): the red-eye concern is resolved and must
+    // not keep gating products.
+    const resolvedEyeRedness =
+      caution.length === 1 &&
+      caution[0].id === "eye-redness-unresolved" &&
+      eyeRednessResolved(rawMessage);
+    const effectiveCaution = resolvedEyeRedness ? [] : caution;
+
+    // Red flags: highest level wins (emergency > urgent).
+    const hasEmergency = redFlags.some((rule) => rule.level === "emergency");
+    if (redFlags.length > 0) {
+      const level: SafetyLevel = hasEmergency ? "emergency" : "urgent";
+      const steps = Array.from(new Set(redFlags.map((rule) => rule.nextStep)));
+      const labels = redFlags.map((rule) => rule.label);
+      return buildAssessment({
+        level,
+        redFlags,
+        caution: [],
+        reasons: [
+          `Possible ${labels.join("; ")}.`,
+          ...redFlags.map((rule) => rule.explanation),
+        ],
+        followUpQuestions: [],
+        nextSteps: steps,
+        explanation: `This case may involve a red flag: ${labels.join("; ")}. ${redFlags
+          .map((rule) => rule.explanation)
+          .join(" ")}`,
+        title: hasEmergency
+          ? "Urgent safety concern — act now"
+          : "Urgent safety concern",
+      });
+    }
+
+    if (effectiveCaution.length > 0) {
+      const ids = effectiveCaution.map((rule) => rule.id);
+      const followUps = Array.from(
+        new Set(
+          effectiveCaution.flatMap((rule) => CAUTION_FOLLOW_UPS[rule.id] ?? []),
+        ),
+      );
+      return buildAssessment({
+        level: "caution",
+        redFlags: [],
+        caution: effectiveCaution,
+        reasons: [
+          `More information is needed before a product can be considered (${ids.join(", ")}).`,
+          ...effectiveCaution.map((rule) => rule.explanation),
+        ],
+        followUpQuestions: followUps,
+        nextSteps: [],
+        explanation:
+          "No urgent warning sign was identified, but this symptom needs more information (or pharmacist assessment) before any product can be suggested.",
+        title: "More information needed",
+      });
+    }
+
+    if (isCustomerCase(facts) && !resolvedEyeRedness) {
+      const questions = buildGenericQuestions(facts);
+      // A concrete shopping request (the model mapped the case to product
+      // classes) is allowed to proceed to filtered recommendations; the
+      // generic missing-info questions only gate symptom cases that have no
+      // clear shopping intent yet.
+      const hasConcreteShoppingRequest =
+        facts.productQueries.length > 0 || SHOPPING_VOCAB.test(rawMessage);
+      if (questions.length > 0 && !hasConcreteShoppingRequest) {
+        return buildAssessment({
+          level: "caution",
+          redFlags: [],
+          caution: [],
+          reasons: [
+            "Important safety information is still missing before a safe suggestion can be made.",
+          ],
+          followUpQuestions: questions,
+          nextSteps: [],
+          explanation:
+            "No urgent red flag was identified from what has been shared so far, but important information is missing before a safe suggestion can be made.",
+          title: "More information needed",
+        });
+      }
+    }
+
+    // No symptom or shopping goal we can act on: we cannot determine a safe
+    // next step from the available information.
+    const hasRecognisableRequest =
+      isCustomerCase(facts) ||
+      Boolean(facts.goal && facts.goal.trim()) ||
+      facts.productQueries.length > 0 ||
+      facts.searchTerms.length > 0 ||
+      (SHOPPING_VOCAB.test(rawMessage) &&
+        !isVagueSymptomRequest(rawMessage, facts));
+    if (!hasRecognisableRequest) {
+      return buildAssessment({
+        level: "insufficient_information",
+        redFlags: [],
+        caution: [],
+        reasons: [
+          "The request does not contain enough information to determine a safe next step.",
+        ],
+        followUpQuestions: [],
+        nextSteps: [
+          "Ask the pharmacist to describe the customer's concern or what kind of product they are looking for.",
+        ],
+        explanation:
+          "There is not enough information to determine what is being asked or what would be safe to suggest.",
+        title: "More information needed",
+      });
+    }
+
+    return buildAssessment({
+      level: "routine",
+      redFlags: [],
+      caution: [],
+      reasons: ["No red flag was identified from the available information."],
+      followUpQuestions: [],
+      nextSteps: [],
+      explanation:
+        "No urgent warning signs were identified from the information provided. This is not a diagnosis and does not guarantee the customer is safe.",
+      title: "No red flags identified",
+    });
+  } catch {
+    // Internal failure must never widen product permission.
+    return safeFallbackAssessment();
+  }
+}
+
+/**
+ * Apply validated model-proposed concerns to a deterministic assessment.
+ *
+ * Escalation-only: a model concern can raise the level (routine→caution,
+ * caution→urgent, …) but can never lower it, and malformed concerns are
+ * dropped. The recommendation gate always derives from the resulting level,
+ * so an invalid or failed model call can never widen product permission.
+ */
+export function applyModelConcerns(
+  assessment: SafetyAssessment,
+  concerns: readonly ModelSafetyConcern[],
+): SafetyAssessment {
+  const valid: ModelSafetyConcern[] = [];
+  for (const concern of concerns ?? []) {
+    if (!concern || typeof concern !== "object") continue;
+    const severity = (concern as { severity?: unknown }).severity;
+    const reason = (concern as { reason?: unknown }).reason;
+    if (
+      severity !== "emergency" &&
+      severity !== "urgent" &&
+      severity !== "caution"
+    ) {
+      continue;
+    }
+    if (typeof reason !== "string" || !reason.trim()) continue;
+    valid.push({ severity, reason: reason.trim().slice(0, 200) });
+    if (valid.length >= 4) break;
+  }
+  if (valid.length === 0) return assessment;
+
+  // Escalation matrix — never downgrade.
+  let level: SafetyLevel = assessment.level;
+  if (valid.some((concern) => concern.severity === "emergency")) {
+    level = "emergency";
+  } else if (valid.some((concern) => concern.severity === "urgent")) {
+    if (level !== "emergency") level = "urgent";
+  } else if (level === "routine") {
+    level = "caution";
+  }
+
+  const reasonLines = valid.map(
+    (concern) => `the assistant flagged: ${concern.reason}`,
+  );
+  const concernText = valid.map((concern) => concern.reason).join("; ");
+
+  if (level === assessment.level) {
     return {
-      status,
-      severity: severityFor(status),
-      title: "Urgent safety concern",
-      explanation: `This case may involve a red flag: ${matched
-        .map((rule) => rule.label)
-        .join("; ")}. ${matched.map((rule) => rule.explanation).join(" ")}`,
-      questions: [],
-      nextSteps: Array.from(new Set(matched.map((rule) => rule.nextStep))),
-      triggers: matched.map((rule) => rule.id),
+      ...assessment,
+      modelConcerns: [...assessment.modelConcerns, ...valid],
+      reasons: [...assessment.reasons, ...reasonLines],
+      explanation: `The assistant flagged: ${concernText}. ${assessment.explanation}`,
     };
   }
 
-  if (isCustomerCase(facts)) {
-    const questions = buildQuestions(facts);
-    if (questions.length > 0) {
-      const status: SafetyStatus = "UNRESOLVED";
-      return {
-        status,
-        severity: severityFor(status),
-        title: "More information needed",
-        explanation:
-          "No urgent red flag was identified from what has been shared so far, but important information is missing before a safe suggestion can be made.",
-        questions,
-        nextSteps: [],
-        triggers: [],
-      };
-    }
+  // Escalated: the assistant's finding leads the explanation. The stale
+  // "no urgent red flag was identified" wording must never precede a real
+  // flag, so for urgent/emergency escalations it is replaced entirely.
+  const explanation =
+    level === "emergency" || level === "urgent"
+      ? `The assistant identified a potential red flag: ${concernText}.`
+      : `The assistant flagged a concern to check first: ${concernText}. ${assessment.explanation}`;
+
+  const nextSteps =
+    level === "emergency"
+      ? ["Seek urgent professional assessment for this concern."]
+      : level === "urgent"
+        ? [
+            "Arrange prompt professional assessment before recommending anything.",
+          ]
+        : assessment.nextSteps;
+
+  // Urgent/emergency guidance must not be delayed or buried under generic
+  // clarifying questions — the next step is professional assessment.
+  const followUpQuestions =
+    level === "emergency" || level === "urgent"
+      ? []
+      : level === "caution" && assessment.followUpQuestions.length === 0
+        ? [
+            "Please verify this concern with a reliable reference before any product is suggested.",
+          ]
+        : assessment.followUpQuestions;
+
+  return {
+    ...assessment,
+    status: statusForLevel(level),
+    severity: severityForLevel(level),
+    level,
+    recommendationPermission: permissionForLevel(level),
+    title:
+      level === "emergency"
+        ? "Urgent safety concern — act now"
+        : level === "urgent"
+          ? "Urgent safety concern"
+          : level === "caution"
+            ? "More information needed"
+            : assessment.title,
+    explanation,
+    reasons: [...reasonLines, ...assessment.reasons],
+    nextSteps,
+    questions: followUpQuestions,
+    followUpQuestions,
+    recommendedNextStep: nextSteps[0] ?? assessment.recommendedNextStep,
+    requiresProfessionalEvaluation:
+      level === "emergency" ||
+      level === "urgent" ||
+      assessment.requiresProfessionalEvaluation,
+    modelConcerns: [...assessment.modelConcerns, ...valid],
+  };
+}
+
+/**
+ * True when a caution concern is *only* about an allergy the case already
+ * records. Allergies are a deterministic, hard-filterable constraint: the
+ * retrieval layer already excludes matching ingredients (and marks
+ * ingredient-data gaps as "cannot be confirmed"). Such a concern must not
+ * escalate the gate and block otherwise safe, filtered suggestions.
+ * Urgent/emergency concerns always pass this check.
+ */
+export function isAllergyOnlyConcern(
+  concern: ModelSafetyConcern,
+  facts: Pick<CaseFacts, "allergies">,
+): boolean {
+  if (concern.severity !== "caution") return false;
+  if (facts.allergies.length === 0) return false;
+  return /\ballerg\w*|allergic|sensitivit\w*|sensitive to|حساسیت/i.test(
+    concern.reason,
+  );
+}
+
+/**
+ * Merge validated model-proposed questions into a caution assessment.
+ *
+ * The AI drives the case conversation, but questions are only shown on
+ * caution-level assessments — urgent/emergency guidance is never delayed by
+ * questions — and the deterministic protocol questions (eye safety,
+ * interactions) stay first as the mandatory floor.
+ */
+export function applyModelFollowUpQuestions(
+  assessment: SafetyAssessment,
+  questions: readonly string[],
+): SafetyAssessment {
+  const valid: string[] = [];
+  for (const question of questions ?? []) {
+    if (typeof question !== "string") continue;
+    const trimmed = question.trim().slice(0, 200);
+    if (!trimmed) continue;
+    valid.push(trimmed);
+    if (valid.length >= 5) break;
+  }
+  if (valid.length === 0) return assessment;
+  if (assessment.level !== "caution") return assessment;
+
+  const seen = new Set(
+    assessment.followUpQuestions.map((question) => question.toLowerCase()),
+  );
+  const merged = [...assessment.followUpQuestions];
+  // Protocol questions already occupy up to 5 slots; leave room for the
+  // model's more specific questions up to a combined cap of 8.
+  for (const question of valid) {
+    const key = question.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(question);
+    if (merged.length >= 8) break;
   }
 
   return {
-    status: "LOWER_RISK",
-    severity: "info",
-    title: "No red flags identified",
-    explanation:
-      "No urgent warning signs were identified from the information provided. This is not a diagnosis and does not guarantee the customer is safe.",
-    questions: [],
-    nextSteps: [],
-    triggers: [],
+    ...assessment,
+    followUpQuestions: merged,
+    questions: merged,
   };
+}
+
+/**
+ * Coerce an untrusted value (persisted row, stale client payload) into a
+ * `SafetyAssessment`. Old rows without the structured fields get a
+ * conservative permission derived from their legacy status.
+ */
+export function coerceSafetyAssessment(
+  value: unknown,
+): SafetyAssessment | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+
+  const status: SafetyStatus =
+    record.status === "HIGH_RISK" ||
+    record.status === "UNRESOLVED" ||
+    record.status === "LOWER_RISK"
+      ? record.status
+      : "UNRESOLVED";
+
+  const legacyPermission: RecommendationPermission =
+    status === "HIGH_RISK" ? "blocked" : "allowed";
+
+  const level: SafetyLevel =
+    record.level === "emergency" ||
+    record.level === "urgent" ||
+    record.level === "caution" ||
+    record.level === "routine" ||
+    record.level === "insufficient_information"
+      ? record.level
+      : status === "HIGH_RISK"
+        ? "urgent"
+        : status === "LOWER_RISK"
+          ? "routine"
+          : "caution";
+
+  const strings = (key: string): string[] =>
+    Array.isArray(record[key])
+      ? (record[key] as unknown[]).filter(
+          (item): item is string => typeof item === "string",
+        )
+      : [];
+
+  const questions = strings("followUpQuestions");
+  const nextSteps = strings("nextSteps");
+
+  // Untrusted model concerns are validated on read as well.
+  const modelConcerns: ModelSafetyConcern[] = [];
+  if (Array.isArray(record.modelConcerns)) {
+    for (const item of record.modelConcerns as unknown[]) {
+      if (!item || typeof item !== "object") continue;
+      const entry = item as Record<string, unknown>;
+      const severity = entry.severity;
+      const reason = entry.reason;
+      if (
+        (severity === "emergency" ||
+          severity === "urgent" ||
+          severity === "caution") &&
+        typeof reason === "string" &&
+        reason.trim()
+      ) {
+        modelConcerns.push({
+          severity,
+          reason: reason.trim().slice(0, 200),
+        });
+        if (modelConcerns.length >= 4) break;
+      }
+    }
+  }
+
+  // Permission is narrowed conservatively: a HIGH_RISK row can never widen
+  // itself to "allowed", no matter what the stored payload claims.
+  const storedPermission =
+    record.recommendationPermission === "blocked" ||
+    record.recommendationPermission === "restricted" ||
+    record.recommendationPermission === "allowed"
+      ? record.recommendationPermission
+      : legacyPermission;
+  const recommendationPermission: RecommendationPermission =
+    status === "HIGH_RISK" ? "blocked" : storedPermission;
+
+  return {
+    status,
+    severity:
+      record.severity === "critical" ||
+      record.severity === "warning" ||
+      record.severity === "info"
+        ? record.severity
+        : severityForLevel(level),
+    title:
+      typeof record.title === "string" && record.title.trim()
+        ? record.title
+        : "Safety assessment",
+    explanation:
+      typeof record.explanation === "string"
+        ? record.explanation
+        : "No explanation was recorded.",
+    questions: strings("questions"),
+    nextSteps,
+    triggers: strings("triggers"),
+    deterministicOnly:
+      typeof record.deterministicOnly === "boolean"
+        ? record.deterministicOnly
+        : undefined,
+    level,
+    recommendationPermission,
+    detectedRedFlags: strings("detectedRedFlags"),
+    reasons: strings("reasons"),
+    followUpQuestions: questions,
+    recommendedNextStep:
+      typeof record.recommendedNextStep === "string" &&
+      record.recommendedNextStep.trim()
+        ? record.recommendedNextStep
+        : (nextSteps[0] ?? null),
+    requiresProfessionalEvaluation:
+      typeof record.requiresProfessionalEvaluation === "boolean"
+        ? record.requiresProfessionalEvaluation
+        : status === "HIGH_RISK",
+    rulesetVersion:
+      typeof record.rulesetVersion === "string"
+        ? record.rulesetVersion
+        : "unknown",
+    modelConcerns,
+  };
+}
+
+/* ── Recommendation gate (deterministic, backend-enforced) ───── */
+
+const GATE_REASONS: Record<
+  RecommendationPermission,
+  { code: string; reason: string }
+> = {
+  blocked: {
+    code: "safety_blocked",
+    reason:
+      "Product suggestions are withheld because this case needs urgent professional attention.",
+  },
+  restricted: {
+    code: "safety_restricted",
+    reason:
+      "Product suggestions are withheld until the safety questions above are answered.",
+  },
+  allowed: {
+    code: "safety_allowed",
+    reason:
+      "Product suggestions may be shown after relevance and allergy filtering.",
+  },
+};
+
+/**
+ * Turn an assessment into the hard product-card decision. Only an explicit
+ * `allowed` permission may pass; anything else suppresses the cards.
+ */
+export function productGateDecision(
+  assessment: SafetyAssessment,
+): ProductGateDecision {
+  const { code, reason } = GATE_REASONS[assessment.recommendationPermission];
+  return {
+    allowed: assessment.recommendationPermission === "allowed",
+    permission: assessment.recommendationPermission,
+    reasonCode: code,
+    reason,
+  };
+}
+
+/** Convenience predicate used by the pipeline and the UI. */
+export function permissionAllowsProducts(
+  assessment: Pick<SafetyAssessment, "recommendationPermission">,
+): boolean {
+  return assessment.recommendationPermission === "allowed";
 }

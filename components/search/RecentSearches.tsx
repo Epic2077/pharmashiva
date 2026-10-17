@@ -2,26 +2,61 @@
 
 import Link from "next/link";
 import { Clock } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 
 const STORAGE_KEY = "pharmashiva-recent-searches";
+const CHANGE_EVENT = "pharmashiva-recent-searches-change";
+
+const EMPTY: string[] = [];
+
+/** Cache so the same underlying value always maps to the same snapshot. */
+let cachedRaw: string | null = null;
+let cachedSnapshot: string[] = EMPTY;
+
+function parseRecentSearches(raw: string): string[] {
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return EMPTY;
+    const items = parsed
+      .filter((value): value is string => typeof value === "string")
+      .slice(0, 5);
+    return items.length > 0 ? items : EMPTY;
+  } catch {
+    return EMPTY;
+  }
+}
+
+function subscribe(callback: () => void) {
+  // `storage` covers cross-tab writes; the custom event covers same-tab
+  // writes from `addRecentSearch`.
+  window.addEventListener("storage", callback);
+  window.addEventListener(CHANGE_EVENT, callback);
+  return () => {
+    window.removeEventListener("storage", callback);
+    window.removeEventListener(CHANGE_EVENT, callback);
+  };
+}
+
+/**
+ * Snapshot of the recent searches. The result is cached: the same raw
+ * localStorage value always returns the same array reference, which
+ * `useSyncExternalStore` requires to avoid an infinite render loop.
+ */
+function getSnapshot(): string[] {
+  let raw: string | null = null;
+  try {
+    raw = window.localStorage.getItem(STORAGE_KEY);
+  } catch {
+    raw = null;
+  }
+  if (raw === cachedRaw) return cachedSnapshot;
+  cachedRaw = raw;
+  cachedSnapshot = raw ? parseRecentSearches(raw) : EMPTY;
+  return cachedSnapshot;
+}
 
 export default function RecentSearches() {
-  const [searches, setSearches] = useState<string[]>([]);
-
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw) as string[];
-        if (Array.isArray(parsed)) {
-          setSearches(parsed.slice(0, 5));
-        }
-      }
-    } catch (error) {
-      console.error("Failed to load recent searches:", error);
-    }
-  }, []);
+  const searches = useSyncExternalStore(subscribe, getSnapshot, () => EMPTY);
 
   if (searches.length === 0) return null;
 

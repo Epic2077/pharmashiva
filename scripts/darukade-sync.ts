@@ -25,11 +25,17 @@ import {
   emptyStats,
   mapWithConcurrency,
   getDarukadeConfig,
-  type NormalizedProductDetail,
   type SyncStats,
 } from "../lib/darukade/index.ts";
 
-type Mode = "discover" | "enrich" | "product" | "related" | "full" | "status" | "stats";
+type Mode =
+  | "discover"
+  | "enrich"
+  | "product"
+  | "related"
+  | "full"
+  | "status"
+  | "stats";
 
 interface Args {
   mode: Mode;
@@ -80,11 +86,19 @@ function parseArgs(argv: string[]): Args {
   ];
   return {
     mode: valid.includes(modeValue) ? modeValue : "stats",
-    query: typeof flags.get("query") === "string" ? String(flags.get("query")) : undefined,
+    query:
+      typeof flags.get("query") === "string"
+        ? String(flags.get("query"))
+        : undefined,
     category:
-      typeof flags.get("category") === "string" ? String(flags.get("category")) : undefined,
+      typeof flags.get("category") === "string"
+        ? String(flags.get("category"))
+        : undefined,
     id: flags.has("id") ? num("id", NaN) : undefined,
-    url: typeof flags.get("url") === "string" ? String(flags.get("url")) : undefined,
+    url:
+      typeof flags.get("url") === "string"
+        ? String(flags.get("url"))
+        : undefined,
     pages: num("pages", 1),
     limit: num("limit", 50),
     concurrency: num("concurrency", getDarukadeConfig().concurrency),
@@ -97,8 +111,9 @@ function parseArgs(argv: string[]): Args {
 function loadEnv(): void {
   // Node 20.12+/22 can load a .env file natively.
   try {
-    const loader = (process as unknown as { loadEnvFile?: (path?: string) => void })
-      .loadEnvFile;
+    const loader = (
+      process as unknown as { loadEnvFile?: (path?: string) => void }
+    ).loadEnvFile;
     loader?.();
   } catch {
     // No .env file — rely on the real environment.
@@ -139,7 +154,9 @@ async function runDiscover(
     );
     if (args.dryRun) {
       for (const product of listing.products.slice(0, 5)) {
-        log(`  · ${product.sourceProductId} ${product.nameFa} — ${product.price ?? "?"} تومان / ${product.availability}`);
+        log(
+          `  · ${product.sourceProductId} ${product.nameFa} — ${product.price ?? "?"} تومان / ${product.availability}`,
+        );
       }
       continue;
     }
@@ -169,11 +186,17 @@ async function enrichOne(
       const relationships = await client.fetchRelated(product.sourceProductId);
       if (relationships.length > 0) product.relationships = relationships;
     } catch (error) {
-      log(`  ! related fetch failed for ${product.sourceProductId}: ${(error as Error).message}`);
+      log(
+        `  ! related fetch failed for ${product.sourceProductId}: ${(error as Error).message}`,
+      );
     }
   }
   if (dryRun) {
-    return { id: product.sourceProductId, name: product.nameFa, unchanged: false };
+    return {
+      id: product.sourceProductId,
+      name: product.nameFa,
+      unchanged: false,
+    };
   }
   const { unchanged } = await repo.upsertProduct(product, { enriched: true });
   return { id: product.sourceProductId, name: product.nameFa, unchanged };
@@ -186,13 +209,21 @@ async function runEnrich(
   stats: SyncStats,
 ): Promise<void> {
   const claimed = await repo.claimQueued(args.limit);
-  log(`draining ${claimed.length} queued product(s), concurrency ${args.concurrency}`);
+  log(
+    `draining ${claimed.length} queued product(s), concurrency ${args.concurrency}`,
+  );
   let index = 0;
   await mapWithConcurrency(claimed, args.concurrency, async (item) => {
     index += 1;
     const prefix = `[${index}/${claimed.length}] ${item.sourceProductId}`;
     try {
-      const result = await enrichOne(repo, client, item.productUrl, args.related, args.dryRun);
+      const result = await enrichOne(
+        repo,
+        client,
+        item.productUrl,
+        args.related,
+        args.dryRun,
+      );
       if (result.unchanged) {
         stats.productsUnchanged += 1;
         log(`${prefix} = unchanged`);
@@ -200,13 +231,19 @@ async function runEnrich(
         stats.productsUpserted += 1;
         log(`${prefix} ✓ ${result.name}`);
       }
-      if (!args.dryRun) await repo.markQueued(item.sourceProductId, "done", item.attempts + 1);
+      if (!args.dryRun)
+        await repo.markQueued(item.sourceProductId, "done", item.attempts + 1);
     } catch (error) {
       stats.failures += 1;
       const message = (error as Error).message;
       log(`${prefix} ✗ ${message}`);
       if (!args.dryRun) {
-        await repo.markQueued(item.sourceProductId, "failed", item.attempts + 1, message);
+        await repo.markQueued(
+          item.sourceProductId,
+          "failed",
+          item.attempts + 1,
+          message,
+        );
       }
     }
   });
@@ -218,7 +255,8 @@ async function resolveUrl(
   args: Args,
 ): Promise<string> {
   if (args.url) return args.url;
-  if (!args.id) throw new Error("product/related requires --id <sourceId> or --url <path>");
+  if (!args.id)
+    throw new Error("product/related requires --id <sourceId> or --url <path>");
   const { data, error } = await sb
     .from("products")
     .select("canonical_url")
@@ -257,9 +295,13 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
 
   if (args.mode === "stats" || args.mode === "status") {
-    const sb = createClient(requireEnv("SUPABASE_URL"), requireEnv("SUPABASE_SERVICE_ROLE_KEY"), {
-      auth: { persistSession: false, autoRefreshToken: false },
-    });
+    const sb = createClient(
+      requireEnv("SUPABASE_URL"),
+      requireEnv("SUPABASE_SERVICE_ROLE_KEY"),
+      {
+        auth: { persistSession: false, autoRefreshToken: false },
+      },
+    );
     const repo = new DarukadeRepository(sb);
     if (args.mode === "stats") {
       console.log(JSON.stringify(await repo.catalogStats(), null, 2));
@@ -277,9 +319,13 @@ async function main(): Promise<void> {
   process.on("SIGINT", onSignal);
   process.on("SIGTERM", onSignal);
 
-  const sb = createClient(requireEnv("SUPABASE_URL"), requireEnv("SUPABASE_SERVICE_ROLE_KEY"), {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
+  const sb = createClient(
+    requireEnv("SUPABASE_URL"),
+    requireEnv("SUPABASE_SERVICE_ROLE_KEY"),
+    {
+      auth: { persistSession: false, autoRefreshToken: false },
+    },
+  );
   const repo = new DarukadeRepository(sb);
   const client = new DarukadeClient({
     signal: controller.signal,
@@ -310,7 +356,12 @@ async function main(): Promise<void> {
     log(`done — ${JSON.stringify(stats)}`);
   } catch (error) {
     if (runId) {
-      await repo.finishRun(runId, "failed", stats as never, (error as Error).message);
+      await repo.finishRun(
+        runId,
+        "failed",
+        stats as never,
+        (error as Error).message,
+      );
     }
     throw error;
   }

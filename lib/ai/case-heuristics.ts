@@ -44,7 +44,17 @@ const SYMPTOM_TERMS: string[] = [
   "sneezing",
   "acne",
   "hair loss",
+  "red eye",
+  "red eyes",
+  "eye redness",
+  "eye pain",
+  "eye hurts",
+  "blurred vision",
+  "blurry vision",
   "سردرد",
+  "قرمزی چشم",
+  "درد چشم",
+  "تاری دید",
   "معده",
   "درد",
   "تهوع",
@@ -73,14 +83,76 @@ const NEGATION =
 
 /** Filler words that can never be the allergen themselves. */
 const ALLERGEN_STOPWORDS = new Set([
-  "a", "an", "the", "to", "from", "with", "of", "has", "have", "had",
-  "is", "are", "was", "were", "and", "or", "but", "who", "that", "which",
-  "so", "for", "about", "against", "my", "his", "her", "their", "our",
-  "your", "customer", "patient", "client", "person", "she", "he", "they",
-  "i", "we", "you", "it", "this", "there", "very", "known", "no", "not",
-  "به", "از", "با", "که", "و", "یا", "ولی", "این", "آن", "دارد", "داره",
-  "دارند", "نیز", "هم", "مشتری", "بیمار", "شخص", "او", "برای", "یک", "هست",
-  "است", "بود",
+  "a",
+  "an",
+  "the",
+  "to",
+  "from",
+  "with",
+  "of",
+  "has",
+  "have",
+  "had",
+  "is",
+  "are",
+  "was",
+  "were",
+  "and",
+  "or",
+  "but",
+  "who",
+  "that",
+  "which",
+  "so",
+  "for",
+  "about",
+  "against",
+  "my",
+  "his",
+  "her",
+  "their",
+  "our",
+  "your",
+  "customer",
+  "patient",
+  "client",
+  "person",
+  "she",
+  "he",
+  "they",
+  "i",
+  "we",
+  "you",
+  "it",
+  "this",
+  "there",
+  "very",
+  "known",
+  "no",
+  "not",
+  "به",
+  "از",
+  "با",
+  "که",
+  "و",
+  "یا",
+  "ولی",
+  "این",
+  "آن",
+  "دارد",
+  "داره",
+  "دارند",
+  "نیز",
+  "هم",
+  "مشتری",
+  "بیمار",
+  "شخص",
+  "او",
+  "برای",
+  "یک",
+  "هست",
+  "است",
+  "بود",
 ]);
 
 const ALLERGY_CONNECTOR = /,|\b(?:and|or|but|who|which|that|so)\b/i;
@@ -195,7 +267,9 @@ function extractAge(text: string): number | null {
 }
 
 function extractPregnancy(text: string): boolean | null {
-  if (/pregnan|breastfeed|breast-feeding|lactat|باردار|شیرده|شيرده/i.test(text)) {
+  if (
+    /pregnan|breastfeed|breast-feeding|lactat|باردار|شیرده|شيرده/i.test(text)
+  ) {
     return true;
   }
   return null;
@@ -209,12 +283,14 @@ function extractDuration(text: string): string | null {
   return null;
 }
 
+/**
+ * Search terms for the deterministic path. Only curated symptom terms are
+ * used — never the raw message sentence, which matched catalog noise (e.g.
+ * promoted beauty products for "Ali's eyes are red").
+ */
 function buildSearchTerms(message: string, symptoms: string[]): string[] {
-  const cleaned = message
-    .replace(/\s+/g, " ")
-    .replace(/[?!.]+$/g, "")
-    .trim();
-  return unique([cleaned.slice(0, 120), ...symptoms]).slice(0, 3);
+  void message;
+  return unique(symptoms).slice(0, 3);
 }
 
 /**

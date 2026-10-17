@@ -77,8 +77,12 @@ export default function ProductDialog({
   const handleOpenProduct = useCallback(() => {
     pushedRef.current = false;
     onOpenChange(false);
-    router.replace(`/search/products/${product.id}`);
-  }, [product.id, onOpenChange, router]);
+    const url = product.canonical_url;
+    const href = url
+      ? `/search/products/${product.id}?url=${encodeURIComponent(url)}`
+      : `/search/products/${product.id}`;
+    router.replace(href);
+  }, [product.id, product.canonical_url, onOpenChange, router]);
 
   const metaTags = [product.form, product.package_size, product.availability]
     .filter(Boolean)
@@ -180,7 +184,9 @@ export default function ProductDialog({
             </p>
             {product.ingredients.length === 0 ? (
               <p className="px-1 text-sm text-muted-foreground">
-                No ingredients listed.
+                {product.detailLoaded === false
+                  ? "Ingredients unavailable — open the product page to fetch them."
+                  : "No ingredients listed."}
               </p>
             ) : (
               <div className="flex flex-wrap gap-1.5">

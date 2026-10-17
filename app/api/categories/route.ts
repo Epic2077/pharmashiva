@@ -1,75 +1,59 @@
-import type { NextRequest } from "next/server";
 import {
-  getAllCategories,
   getCategoryTree,
-  getSubcategories,
-  getTopLevelCategories,
-  searchCategories,
-} from "@/lib/supabase";
-import { getServerLanguage, localizeCategoryName } from "@/lib/i18n-server";
-import { translateEnToFa } from "@/lib/translate";
+  requestForCategoryNode,
+} from "@/lib/darukade/categories";
+import type { DarukadeCategoryNode } from "@/lib/darukade/types";
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Unexpected error";
+export interface CategoryNodeDto {
+  id: string;
+  title: string;
+  url: string;
+  parentId: string | null;
+  depth: number;
+  searchable: boolean;
+  children: CategoryNodeDto[];
+}
+
+function toDto(
+  node: DarukadeCategoryNode,
+  maxDepth: number,
+  depth = 0,
+): CategoryNodeDto | null {
+  const request = requestForCategoryNode(node);
+  return {
+    id: node.id !== null ? String(node.id) : node.url,
+    title: node.title,
+    url: node.url,
+    parentId: node.parentId !== null ? String(node.parentId) : null,
+    depth,
+    searchable: request.kind !== "unsupported",
+    children:
+      depth < maxDepth
+        ? node.children
+            .map((child) => toDto(child, maxDepth, depth + 1))
+            .filter((child): child is CategoryNodeDto => child !== null)
+        : [],
+  };
 }
 
 /**
- * Categories.
- *
- *   GET /api/categories                  → top-level categories
- *   GET /api/categories?q=vitamin        → search category names
- *   GET /api/categories?parent=<id>      → direct subcategories
- *   GET /api/categories?tree=true        → full nested tree
- *   GET /api/categories?source=<id>      → scope by source (optional)
+ * Verified Darukade category hierarchy, straight from the source's own
+ * navigation data (`headerFooterData.header.menus`). No guessed categories.
  */
-export async function GET(request: NextRequest) {
-  const params = request.nextUrl.searchParams;
-  const source = params.get("source") ?? undefined;
-  const query = params.get("q")?.trim();
-  const parent = params.get("parent");
-  const tree = params.get("tree") === "true";
-  const limit = Math.min(Number(params.get("limit") ?? 24) || 24, 50);
-
+export async function GET() {
   try {
-    if (query) {
-      const language = await getServerLanguage();
-      let matches = await searchCategories(query, limit);
-
-      // Stored names are Persian, so retry an English query in Farsi.
-      if (matches.length === 0 && language === "en") {
-        const translated = await translateEnToFa(query);
-        if (translated !== query) {
-          matches = await searchCategories(translated, limit);
-        }
-      }
-
-      const allCategories = await getAllCategories();
-      const byId = new Map(
-        allCategories.map((category) => [category.id, category]),
-      );
-      const categories = await Promise.all(
-        matches.map(async (category) => {
-          const parentCategory = category.parent_id
-            ? byId.get(category.parent_id)
-            : undefined;
-          return {
-            id: category.id,
-            title: await localizeCategoryName(category, language),
-            parent: parentCategory
-              ? await localizeCategoryName(parentCategory, language)
-              : null,
-          };
-        }),
-      );
-
-      return Response.json({ categories });
-    }
-
-    if (tree) return Response.json({ tree: await getCategoryTree(source) });
-    if (parent)
-      return Response.json({ categories: await getSubcategories(parent) });
-    return Response.json({ categories: await getTopLevelCategories(source) });
+    const tree = await getCategoryTree();
+    const categories = tree
+      .map((node) => toDto(node, 2))
+      .filter((node): node is CategoryNodeDto => node !== null);
+    return Response.json({ categories, source: "darukade-navigation" });
   } catch (error) {
-    return Response.json({ error: errorMessage(error) }, { status: 500 });
+    return Response.json(
+      {
+        error:
+          error instanceof Error ? error.message : "Category data unavailable",
+      },
+      { status: 502 },
+    );
   }
 }

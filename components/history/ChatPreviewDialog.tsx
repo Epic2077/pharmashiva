@@ -91,9 +91,9 @@ export function ChatPreviewDialog({
     >
       <DialogContent
         showCloseButton={false}
-        className="max-h-[85dvh] w-[calc(100%-1.5rem)] max-w-md grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden rounded-3xl p-0 sm:max-w-md"
+        className="max-h-[85dvh] w-[95%] max-w-md grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden rounded-3xl p-0 sm:max-w-md"
       >
-        <DialogHeader className="shrink-0 border-b border-border px-5 py-4 text-left">
+        <DialogHeader className="shrink-0 border-b border-border px-5 py-4 text-left max-w-[95%]">
           <div className="flex items-center gap-3">
             <div className="min-w-0 flex-1">
               <DialogTitle className="truncate text-base">{title}</DialogTitle>

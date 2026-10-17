@@ -47,11 +47,21 @@ export default function SearchBar({ resultCount }: SearchBarProps) {
       document.activeElement.blur();
     }
 
-    router.replace(q ? `/search?q=${encodeURIComponent(q)}` : "/search");
+    const params = new URLSearchParams();
+    if (q) params.set("q", q);
+    // Keep the selected category filter across searches.
+    const category = searchParams.get("cat");
+    if (category) params.set("cat", category);
+    const qs = params.toString();
+    router.replace(qs ? `/search?${qs}` : "/search");
   }
 
   return (
-    <form role="search" className="flex items-center gap-3" onSubmit={handleSubmit}>
+    <form
+      role="search"
+      className="flex items-center gap-3 w-[95%] mx-auto"
+      onSubmit={handleSubmit}
+    >
       <InputGroup className="h-12 flex-1 rounded-2xl">
         <InputGroupAddon align="inline-start" className="pl-3.5">
           <Search className="size-5 text-muted-foreground" />
@@ -68,21 +78,22 @@ export default function SearchBar({ resultCount }: SearchBarProps) {
           value={value}
           onChange={(event) => setValue(event.target.value)}
         />
-        <InputGroupAddon align="inline-end" className="pr-1.5">
+        <InputGroupAddon align="inline-end" className="pr-2">
           <InputGroupButton
             type="submit"
             size="icon-sm"
             variant="default"
             aria-label="Search"
+            className="rounded-full"
           >
-            <ArrowRight className="size-4" />
+            <ArrowRight className="size-3" />
           </InputGroupButton>
         </InputGroupAddon>
       </InputGroup>
       {resultCount !== undefined && resultCount > 0 ? (
         <Badge
           variant="outline"
-          className="h-12 w-12 shrink-0 justify-center rounded-2xl text-sm font-semibold"
+          className="h-8 w-8 shrink-0 justify-center rounded-2xl text-xs font-semibold"
         >
           {resultCount}
         </Badge>

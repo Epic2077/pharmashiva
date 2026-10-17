@@ -25,6 +25,15 @@ export function AssistantMessage({
   const hasThinking = Boolean(message.thinking && message.thinking.length > 0);
   const showThinking = hasThinking || Boolean(message.thinkingStreaming);
 
+  // Client-side enforcement: even if a stale or malformed event carried
+  // product cards, a safety assessment that does not allow recommendations
+  // must suppress them here too.
+  const safetyAllowsProducts =
+    !message.safety || message.safety.recommendationPermission === "allowed";
+  const productsSuppressed =
+    Boolean(message.productsSuppressed) || !safetyAllowsProducts;
+  const gateReason = message.productsGateReason ?? "safety_restricted";
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
@@ -62,6 +71,8 @@ export function AssistantMessage({
             language={language}
             provisional={Boolean(message.productsProvisional)}
             databaseAvailable={message.productsDatabaseAvailable ?? true}
+            suppressed={productsSuppressed}
+            gateReason={gateReason}
           />
         ) : null}
 

@@ -6,6 +6,7 @@
 
 import type {
   CaseFacts,
+  ProductGateDecision,
   ProductRecommendation,
   SafetyAssessment,
 } from "@/types/ai";
@@ -14,8 +15,9 @@ export function buildFallbackResponse(params: {
   facts: CaseFacts;
   safety: SafetyAssessment;
   products: ProductRecommendation[];
+  productGate?: ProductGateDecision;
 }): string {
-  const { safety, products } = params;
+  const { safety, products, productGate } = params;
   const lines: string[] = [];
 
   if (safety.status === "HIGH_RISK") {
@@ -26,30 +28,46 @@ export function buildFallbackResponse(params: {
       lines.push("**Next steps**");
       for (const step of safety.nextSteps) lines.push(`- ${step}`);
     }
+    lines.push("");
+    lines.push("Product suggestions are withheld for this case.");
   } else if (safety.status === "UNRESOLVED") {
-    lines.push("I need a little more information before I can suggest anything safely.");
+    lines.push(
+      "I need a little more information before finalising a suggestion.",
+    );
     if (safety.questions.length) {
       lines.push("");
       for (const question of safety.questions) lines.push(`- ${question}`);
     }
-    lines.push("");
-    lines.push(
-      "_Any products shown below are provisional and are not yet recommended while the safety questions remain open._",
-    );
+    if (productGate && !productGate.allowed) {
+      lines.push("");
+      lines.push(
+        "Product suggestions are withheld until this concern is resolved.",
+      );
+    }
   } else {
     lines.push("Here is what I can share based on the details provided.");
   }
 
-  if (products.length > 0) {
+  if (productGate && !productGate.allowed) {
+    lines.push("");
+    lines.push(productGate.reason);
+  } else if (products.length > 0) {
     lines.push("");
     lines.push(
       `I found ${products.length} matching ${
         products.length === 1 ? "product" : "products"
       } in the current catalog, shown below.`,
     );
+    if (safety.level === "caution") {
+      lines.push(
+        "These suggestions are provisional until the questions above are answered.",
+      );
+    }
   } else {
     lines.push("");
-    lines.push("No suitable matching products were found in the current catalog.");
+    lines.push(
+      "No suitable matching products were found in the current catalog.",
+    );
   }
 
   return lines.join("\n");

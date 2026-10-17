@@ -15,6 +15,33 @@ export type SafetyStatus = "HIGH_RISK" | "UNRESOLVED" | "LOWER_RISK";
 export type SafetySeverity = "critical" | "warning" | "info";
 
 /**
+ * Structured severity of a case, from the deterministic ruleset.
+ *  - emergency: potentially life- or vision-threatening — act immediately.
+ *  - urgent: needs prompt professional assessment.
+ *  - caution: more information or pharmacist assessment is needed before any
+ *    product can be considered.
+ *  - routine: no red flag identified from the available information.
+ *  - insufficient_information: a safe next step cannot be determined yet.
+ */
+export type SafetyLevel =
+  | "emergency"
+  | "urgent"
+  | "caution"
+  | "routine"
+  | "insufficient_information";
+
+/**
+ * Whether product cards may be returned for the current case. This is a hard
+ * backend gate — the language model can never widen it.
+ *  - blocked: no routine product recommendations (emergency/urgent).
+ *  - allowed: product cards may be shown — routine cases normally, caution
+ *    cases as provisional suggestions while the alert questions remain open.
+ *  - restricted: recommendations withheld because a safe next step cannot
+ *    be determined (insufficient_information).
+ */
+export type RecommendationPermission = "blocked" | "restricted" | "allowed";
+
+/**
  * The authoritative, deterministic safety assessment. The language model may
  * *explain* this, but it can never override it.
  */
@@ -23,14 +50,55 @@ export interface SafetyAssessment {
   severity: SafetySeverity;
   title: string;
   explanation: string;
-  /** Focused questions that would resolve remaining uncertainty. */
+  /**
+   * Legacy aliases of the structured fields below, kept so previously
+   * persisted messages and the existing safety-alert UI keep rendering.
+   */
   questions: string[];
-  /** Urgent next steps / referral indicated by the matched rules. */
   nextSteps: string[];
   /** Ids of the deterministic rules that fired (for debugging/audit). */
   triggers: string[];
   /** True when produced purely by deterministic rules (model unavailable). */
   deterministicOnly?: boolean;
+
+  /** Structured safety level (see `SafetyLevel`). */
+  level: SafetyLevel;
+  /** Hard backend gate controlling product cards. */
+  recommendationPermission: RecommendationPermission;
+  /** Ids of the emergency/urgent rules that fired. */
+  detectedRedFlags: string[];
+  /** Why the assessment reached this level. */
+  reasons: string[];
+  /** Focused questions that would resolve remaining uncertainty. */
+  followUpQuestions: string[];
+  /** Single recommended next step, or null when none is indicated. */
+  recommendedNextStep: string | null;
+  /** True when a professional (doctor/eye specialist) should evaluate. */
+  requiresProfessionalEvaluation: boolean;
+  /** Version of the deterministic ruleset that produced this assessment. */
+  rulesetVersion: string;
+  /** Validated concerns raised by the model (escalation-only). */
+  modelConcerns: ModelSafetyConcern[];
+}
+
+/** Machine-readable product-card gate decision derived from the assessment. */
+export interface ProductGateDecision {
+  allowed: boolean;
+  permission: RecommendationPermission;
+  /** Stable reason code for logs/tests, e.g. "safety_emergency". */
+  reasonCode: string;
+  /** Human-readable reason shown when cards are withheld. */
+  reason: string;
+}
+
+/**
+ * A concern raised by the interpretation model, validated at runtime. Model
+ * concerns can only *raise* the safety level — they can never downgrade the
+ * deterministic assessment or widen the recommendation gate.
+ */
+export interface ModelSafetyConcern {
+  severity: "emergency" | "urgent" | "caution";
+  reason: string;
 }
 
 /* ── Case interpretation ────────────────────────────────────── */
@@ -92,11 +160,46 @@ export interface CaseInterpretation {
   reasoning: string[];
   /** True when the model was unavailable and heuristics were used instead. */
   fallback: boolean;
+  /** Validated safety concerns proposed by the model (escalation-only). */
+  safetyConcerns: ModelSafetyConcern[];
+  /**
+   * Questions the model wants the pharmacist to ask. Only shown on caution
+   * assessments; urgent/emergency guidance is never delayed by questions.
+   */
+  followUpQuestions: string[];
 }
 
 /* ── Product recommendations ────────────────────────────────── */
 
 export type ProductCompatibility = "compatible" | "unknown" | "conflict";
+
+/**
+ * Shopping intent derived from the case facts. Keeps symptom-driven requests
+ * separate from pure beauty or supplement shopping so a product valid for one
+ * intent is not offered for another.
+ */
+export type ShoppingIntent =
+  | "medical_symptom"
+  | "beauty"
+  | "supplement"
+  | "general";
+
+/** Machine-readable reason a candidate product was kept out of the reply. */
+export type RelevanceDecisionCode =
+  | "intended_use_mismatch"
+  | "scope_mismatch"
+  | "insufficient_product_data"
+  | "allergy_conflict"
+  | "no_queryable_intent";
+
+/** Per-candidate relevance decision produced by the deterministic gate. */
+export interface RelevanceVerdict {
+  productId: string;
+  pass: boolean;
+  code: RelevanceDecisionCode | null;
+  reason: string;
+  matchedTokens: string[];
+}
 
 export interface ProductRecommendation {
   product: ProductDetails;
@@ -136,6 +239,12 @@ export type ChatEvent =
       databaseAvailable: boolean;
       /** Queries that were executed against the database. */
       queries?: string[];
+      /** True when product cards were withheld by a safety/relevance gate. */
+      suppressed?: boolean;
+      /** Machine-readable reason code when cards are withheld. */
+      gateReason?: string;
+      /** Shopping intent used for retrieval (observability only). */
+      intent?: ShoppingIntent;
     }
   | { type: "text"; delta: string }
   | { type: "error"; message: string }
@@ -149,4 +258,34 @@ export interface PipelineTimings {
   database: number;
   firstToken: number;
   done: number;
+}
+
+/**
+ * Server-side diagnostics for one pipeline run. Contains only rule ids,
+ * product ids and machine-readable codes — never user content. Logged via the
+ * pipeline's `log` callback; not exposed to the client.
+ */
+export interface PipelineDiagnostics {
+  safety: {
+    rulesetVersion: string;
+    level: SafetyLevel;
+    permission: RecommendationPermission;
+    triggers: string[];
+    deterministicOnly: boolean;
+  };
+  retrieval: {
+    databaseAvailable: boolean;
+    queries: string[];
+    scope: ShoppingIntent;
+    candidates: number;
+    kept: number;
+    excluded: Array<{ productId: string; code: RelevanceDecisionCode }>;
+    missingIngredientData: boolean;
+  };
+  timings: PipelineTimings;
+}
+
+export interface PipelineReport {
+  timings: PipelineTimings;
+  diagnostics: PipelineDiagnostics;
 }

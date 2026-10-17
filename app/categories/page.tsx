@@ -2,34 +2,26 @@ import { LayoutGrid, Pill } from "lucide-react";
 import CategoriesCard from "@/components/search/CategoriesCard";
 import CategorySearch from "@/components/categories/CategorySearch";
 import Title from "@/components/shared/Title";
-import { getTopLevelCategoriesWithProductCounts } from "@/lib/supabase";
-import { getServerLanguage, localizeCategoryName } from "@/lib/i18n-server";
-import type { CategoryWithCount } from "@/types/database";
-
-async function safe<T>(promise: Promise<T>, fallback: T): Promise<T> {
-  try {
-    return await promise;
-  } catch (error) {
-    console.error("Supabase query failed:", error);
-    return fallback;
-  }
-}
+import { getCategoryTree } from "@/lib/darukade/categories";
+import { getServerLanguage } from "@/lib/i18n-server";
 
 export default async function CategoriesPage() {
   const language = await getServerLanguage();
+  void language;
 
-  const topLevel = await safe(
-    getTopLevelCategoriesWithProductCounts(),
-    [] as CategoryWithCount[],
-  );
-
-  const items = await Promise.all(
-    topLevel.map(async (category) => ({
-      id: category.id,
-      title: await localizeCategoryName(category, language),
-      count: category.productCount,
-    })),
-  );
+  let items: Array<{ id: string; title: string; count: number }> = [];
+  let unavailable = false;
+  try {
+    const tree = await getCategoryTree();
+    items = tree.map((node) => ({
+      id: node.id !== null ? String(node.id) : node.url,
+      title: node.title,
+      count: node.children.length,
+    }));
+  } catch (error) {
+    console.error("Category tree unavailable:", error);
+    unavailable = true;
+  }
 
   return (
     <div className="flex flex-col gap-6 pt-2">
@@ -48,7 +40,9 @@ export default async function CategoriesPage() {
         </div>
         {items.length === 0 ? (
           <p className="rounded-2xl border border-dashed border-border bg-card px-5 py-10 text-center text-sm text-muted-foreground">
-            No categories found.
+            {unavailable
+              ? "Category navigation could not be loaded from Darukade right now."
+              : "No categories are available from Darukade right now."}
           </p>
         ) : (
           items.map((item) => (

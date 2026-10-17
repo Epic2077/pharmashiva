@@ -7,21 +7,45 @@ interface SearchResultsProps {
   heading: string;
   products: ProductDetails[];
   language: LanguageCode;
+  /** Category-constraint caveat from the source, when present. */
+  note?: string | null;
+  /** Total product count the source reported for this search. */
+  totalProducts?: number;
+}
+
+/** Bounded category localization so cold translation caches never stall cards. */
+async function localizeCategorySafe(
+  category: { name: string } | undefined,
+  language: LanguageCode,
+): Promise<string | null> {
+  if (!category) return null;
+  if (language === "fa") return category.name;
+  try {
+    return await Promise.race([
+      localizeCategoryName(category, language),
+      new Promise<string>((resolve) => {
+        setTimeout(() => resolve(category.name), 700);
+      }),
+    ]);
+  } catch {
+    return category.name;
+  }
 }
 
 export default async function SearchResults({
   heading,
   products,
   language,
+  note = null,
+  totalProducts,
 }: SearchResultsProps) {
   // Precompute the localized category name per product on the server, so the
-  // cards stay compact client components.
+  // cards stay compact client components. Missing localization falls back to
+  // the source's Persian category name.
   const items = await Promise.all(
     products.map(async (product) => ({
       product,
-      categoryName: product.categories[0]
-        ? await localizeCategoryName(product.categories[0], language)
-        : null,
+      categoryName: await localizeCategorySafe(product.categories[0], language),
     })),
   );
 
@@ -31,9 +55,19 @@ export default async function SearchResults({
         {heading}
         <span className="text-sm font-normal text-muted-foreground">
           {" "}
-          ({products.length})
+          ({products.length}
+          {totalProducts !== undefined && totalProducts > products.length
+            ? ` of ${totalProducts}`
+            : ""}
+          )
         </span>
       </h2>
+
+      {note ? (
+        <p className="rounded-2xl border border-warning/30 bg-warning-background px-4 py-3 text-xs text-foreground/90">
+          {note}
+        </p>
+      ) : null}
 
       {products.length === 0 ? (
         <p className="rounded-2xl border border-dashed border-border bg-card px-5 py-10 text-center text-sm text-muted-foreground">

@@ -9,25 +9,42 @@
  */
 
 import type { LanguageCode } from "@/lib/i18n";
-import { assessSafety } from "@/lib/safety/red-flags";
+import { localizeCategoryName } from "@/lib/i18n-server";
+import {
+  applyModelConcerns,
+  applyModelFollowUpQuestions,
+  assessSafety,
+  isAllergyOnlyConcern,
+  productGateDecision,
+} from "@/lib/safety/red-flags";
 import type {
   ChatEvent,
   ChatStage,
+  PipelineDiagnostics,
+  PipelineReport,
+  PipelineTimings,
   ProductRecommendation,
   SafetyAssessment,
+  ShoppingIntent,
 } from "@/types/ai";
 import { extractHeuristicFacts } from "./case-heuristics";
 import { isDeepSeekConfigured } from "./config";
 import { resolveChatModel } from "./models";
 import type { ChatModel } from "@/lib/chat/types";
+import { streamChatCompletion, type DeepSeekMessage } from "./deepseek.service";
 import {
-  streamChatCompletion,
-  type DeepSeekMessage,
-} from "./deepseek.service";
-import { AI_UNAVAILABLE_NOTE, buildFallbackResponse } from "./fallback-response";
+  AI_UNAVAILABLE_NOTE,
+  buildFallbackResponse,
+} from "./fallback-response";
 import { interpretCase, mergeCaseFacts } from "./interpret";
 import { buildResponseUserPrompt, RESPONSE_SYSTEM_PROMPT } from "./prompts";
-import { buildProductQueriesForFacts, retrieveProducts } from "./product-retrieval";
+import {
+  buildProductQueriesForFacts,
+  retrieveProducts,
+  type ProductRetrievalResult,
+} from "./product-retrieval";
+import { planProductEmission } from "./product-gating";
+import { planSafetyEvent, shouldSendInstantSafety } from "./safety-events";
 import { coerceMemory, mergeMemory, memoryToFacts } from "@/lib/chat/memory";
 import type { CaseFacts, CaseMemory } from "@/types/ai";
 
@@ -39,8 +56,8 @@ export interface ChatPipelineParams {
   send: (event: ChatEvent) => void;
   /** `flash` (fast) or `pro` (deep thinking), from the composer's Think toggle. */
   mode?: ChatModel;
-  /** Optional server-side latency logger (never receives user content). */
-  log?: (timings: Record<string, number>) => void;
+  /** Optional server-side diagnostics logger (never receives user content). */
+  log?: (report: PipelineReport) => void;
   /** Per-chat accumulated case memory (from previous turns). */
   memory?: CaseMemory | null;
   /** Called when the case memory is updated for this turn. */
@@ -87,12 +104,28 @@ async function streamText(text: string, send: (event: ChatEvent) => void) {
   }
 }
 
-function safetyEquals(a: SafetyAssessment, b: SafetyAssessment): boolean {
-  return (
-    a.status === b.status &&
-    a.explanation === b.explanation &&
-    a.nextSteps.join("|") === b.nextSteps.join("|")
-  );
+/**
+ * Localize a leaf-category name without blocking the response. Translation is
+ * a network call on a cold cache, so a slow translation falls back to the raw
+ * stored name rather than delaying product cards.
+ */
+async function localizeCategorySafe(
+  category: { name: string } | undefined,
+  language: LanguageCode,
+): Promise<string | null> {
+  if (!category) return null;
+  if (language === "fa") return category.name;
+
+  try {
+    return await Promise.race([
+      localizeCategoryName(category, language),
+      new Promise<string>((resolve) => {
+        setTimeout(() => resolve(category.name), 700);
+      }),
+    ]);
+  } catch {
+    return category.name;
+  }
 }
 
 export async function runChatPipeline({
@@ -125,8 +158,12 @@ export async function runChatPipeline({
   const instantFacts = memoryToFacts(instantMemory);
   const instantSafety = assessSafety(instantFacts, message);
 
-  // If it already looks urgent, surface the red flag immediately.
-  if (instantSafety.status === "HIGH_RISK") {
+  // Deterministic red flags surface instantly. A caution result is held back
+  // while the model is available: the model can escalate it to urgent, and a
+  // "more information needed" warning must not flash right before the real
+  // red flag appears.
+  let safetyEventSent = false;
+  if (shouldSendInstantSafety(instantSafety, isDeepSeekConfigured())) {
     send({
       type: "safety",
       safety: {
@@ -134,20 +171,27 @@ export async function runChatPipeline({
         deterministicOnly: !isDeepSeekConfigured(),
       },
     });
+    safetyEventSent = true;
   }
   mark("safetyInstant");
 
-  // ── Step 2: interpretation and provisional retrieval in parallel ──
+  // ── Step 2: interpretation, and provisional retrieval only when the
+  // instant gate allows it — an already-blocked case gains nothing from
+  // catalog work ──
   stage("interpreting");
+  const instantGate = productGateDecision(instantSafety);
   const [interpretation, earlyRetrieval] = await Promise.all([
     interpretCase({ message, history, signal, memory: memoryState }),
-    retrieveProducts({
-      facts: instantFacts,
-      message,
-      language,
-      provisional: true,
-      signal,
-    }),
+    instantGate.allowed
+      ? retrieveProducts({
+          facts: instantFacts,
+          message,
+          language,
+          provisional: true,
+          signal,
+          dependencies: { localizeCategory: localizeCategorySafe },
+        })
+      : Promise.resolve(null),
   ]);
   mark("interpreted");
 
@@ -164,74 +208,122 @@ export async function runChatPipeline({
     inferredFacts: facts.inferredFacts,
   };
 
+  // Allergy-only caution concerns do not gate: the deterministic ingredient
+  // filter already enforces them on every candidate.
+  const modelConcerns = interpretation.safetyConcerns.filter(
+    (concern) => !isAllergyOnlyConcern(concern, caseFacts),
+  );
+
+  const safety: SafetyAssessment = {
+    ...applyModelFollowUpQuestions(
+      applyModelConcerns(assessSafety(caseFacts, message), modelConcerns),
+      interpretation.followUpQuestions,
+    ),
+    deterministicOnly: interpretation.fallback,
+  };
+
+  // The safety event goes out first — before the memory write and before any
+  // retrieval work — so an escalation reaches the pharmacist as fast as the
+  // interpretation completes.
+  const shouldShowSafety =
+    safety.status !== "LOWER_RISK" || caseFacts.symptoms.length > 0;
+  const plannedSafety = planSafetyEvent({
+    instantSafety,
+    instantEventSent: safetyEventSent,
+    safety,
+    shouldShow: shouldShowSafety,
+  });
+  if (plannedSafety) {
+    send({ type: "safety", safety: plannedSafety });
+  }
+  mark("safety");
+
   send({ type: "memory", memory: updatedMemory });
   await onMemory?.(updatedMemory);
   mark("memory");
 
-  const safety: SafetyAssessment = {
-    ...assessSafety(caseFacts, message),
-    deterministicOnly: interpretation.fallback,
-  };
-
-  const shouldShowSafety =
-    safety.status !== "LOWER_RISK" || caseFacts.symptoms.length > 0;
-  if (shouldShowSafety && !safetyEquals(instantSafety, safety)) {
-    send({ type: "safety", safety });
-  }
-  mark("safety");
-
-  // ── Step 4: retrieval (refine if the interpretation adds value) ──
+  // ── Step 4: retrieval — hard-gated by the safety assessment ───
   stage("retrieving");
-  const provisional = safety.status !== "LOWER_RISK";
-  let products = earlyRetrieval.products;
-  let databaseAvailable = earlyRetrieval.databaseAvailable;
+  const gate = productGateDecision(safety);
+  let products: ProductRecommendation[] = earlyRetrieval?.products ?? [];
+  let databaseAvailable = earlyRetrieval?.databaseAvailable ?? true;
+  let retrievalQueries = earlyRetrieval?.queries ?? [];
+  let retrievalScope: ShoppingIntent = earlyRetrieval?.scope ?? "general";
+  let missingIngredientData = earlyRetrieval?.missingIngredientData ?? false;
+  const excluded: PipelineDiagnostics["retrieval"]["excluded"] = [];
 
-  // The model's product queries drive a refined AI search. Without them we fall
-  // back to the catalog's own (sentence-capable) search, and only spend a second
-  // query when the first pass found little.
-  const hasAiQueries = caseFacts.productQueries.length > 0;
-
-  if (hasAiQueries) {
-    const refined = await retrieveProducts({
-      facts: caseFacts,
-      message,
-      language,
-      provisional,
-      signal,
-    });
-    // If AI suggestions found products, use them as the primary result.
-    if (refined.products.length > 0) {
-      products = refined.products;
-      databaseAvailable = refined.databaseAvailable;
-    } else {
-      products = mergeProducts(refined.products, products, 6);
-      databaseAvailable = databaseAvailable || refined.databaseAvailable;
+  const recordDecisions = (result: ProductRetrievalResult) => {
+    retrievalQueries = result.queries.length
+      ? result.queries
+      : retrievalQueries;
+    retrievalScope = result.scope;
+    missingIngredientData = result.missingIngredientData;
+    for (const verdict of result.decisions) {
+      if (!verdict.pass && verdict.code) {
+        excluded.push({ productId: verdict.productId, code: verdict.code });
+      }
     }
-  } else if (products.length < 3) {
-    const refined = await retrieveProducts({
-      facts: caseFacts,
-      message,
-      language,
-      provisional,
-      signal,
-    });
-    products = mergeProducts(refined.products, products, 6);
-    databaseAvailable = databaseAvailable || refined.databaseAvailable;
-  }
+  };
+  if (earlyRetrieval) recordDecisions(earlyRetrieval);
 
-  products = products.map((item) => ({ ...item, provisional }));
+  if (!gate.allowed) {
+    // Blocked or restricted: no product card may reach the client, no matter
+    // what retrieval returned.
+    products = [];
+  } else {
+    // The model's product queries drive a refined AI search. Without them we
+    // keep the (already relevance-gated) early results.
+    const hasAiQueries = caseFacts.productQueries.length > 0;
+
+    if (hasAiQueries || products.length < 3) {
+      const refined = await retrieveProducts({
+        facts: caseFacts,
+        message,
+        language,
+        provisional: false,
+        signal,
+        dependencies: { localizeCategory: localizeCategorySafe },
+      });
+      recordDecisions(refined);
+      // If AI suggestions found products, use them as the primary result.
+      if (hasAiQueries && refined.products.length > 0) {
+        products = refined.products;
+        databaseAvailable = refined.databaseAvailable;
+      } else {
+        products = mergeProducts(refined.products, products, 6);
+        databaseAvailable = databaseAvailable && refined.databaseAvailable;
+      }
+    }
+
+    // Caution cases show suggestions flagged provisional; routine is final.
+    products = products.map((item) => ({
+      ...item,
+      provisional: safety.level !== "routine",
+    }));
+  }
 
   const productQueriesUsed =
     caseFacts.productQueries.length > 0
       ? caseFacts.productQueries.slice(0, 3)
       : buildProductQueriesForFacts(caseFacts);
 
-  send({
-    type: "products",
-    products: databaseAvailable ? products : [],
-    provisional,
+  const emission = planProductEmission({
+    safety,
+    products,
     databaseAvailable,
     queries: productQueriesUsed,
+    intent: retrievalScope,
+  });
+
+  send({
+    type: "products",
+    products: emission.products,
+    provisional: emission.provisional,
+    databaseAvailable: emission.databaseAvailable,
+    queries: emission.queries,
+    suppressed: emission.suppressed,
+    gateReason: emission.gateReason ?? undefined,
+    intent: emission.intent,
   });
   mark("database");
 
@@ -239,7 +331,12 @@ export async function runChatPipeline({
   stage("composing");
 
   const runFallback = async (extraNote?: string) => {
-    let text = buildFallbackResponse({ facts: caseFacts, safety, products });
+    let text = buildFallbackResponse({
+      facts: caseFacts,
+      safety,
+      products,
+      productGate: gate,
+    });
     if (extraNote) text += `\n\n${extraNote}`;
     await streamText(text, send);
   };
@@ -252,7 +349,13 @@ export async function runChatPipeline({
       ...history,
       {
         role: "user",
-        content: buildResponseUserPrompt({ message, facts: caseFacts, safety, products }),
+        content: buildResponseUserPrompt({
+          message,
+          facts: caseFacts,
+          safety,
+          products,
+          productGate: gate,
+        }),
       },
     ];
 
@@ -288,5 +391,38 @@ export async function runChatPipeline({
 
   mark("done");
   send({ type: "done", timings });
-  log?.(timings);
+
+  // Structured diagnostics: rule ids, product ids and machine-readable codes
+  // only — never user content.
+  const reportTimings: PipelineTimings = {
+    received: timings["received"] ?? 0,
+    interpreted: timings["interpreted"] ?? 0,
+    safety: timings["safety"] ?? 0,
+    database: timings["database"] ?? 0,
+    firstToken: timings["firstToken"] ?? 0,
+    done: timings["done"] ?? 0,
+  };
+  const report: PipelineReport = {
+    timings: reportTimings,
+    diagnostics: {
+      safety: {
+        rulesetVersion: safety.rulesetVersion,
+        level: safety.level,
+        permission: safety.recommendationPermission,
+        triggers: safety.triggers,
+        deterministicOnly: Boolean(safety.deterministicOnly),
+      },
+      retrieval: {
+        databaseAvailable,
+        queries: retrievalQueries,
+        scope: retrievalScope,
+        candidates: products.length + excluded.length,
+        kept: products.length,
+        excluded,
+        missingIngredientData,
+      },
+      timings: reportTimings,
+    },
+  };
+  log?.(report);
 }

@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Manrope, Roboto } from "next/font/google";
+import { Manrope, Roboto, Vazirmatn } from "next/font/google";
 import { THEME_INIT_SCRIPT } from "@/lib/theme-init";
 import "./globals.css";
 
@@ -10,6 +10,12 @@ const manrope = Manrope({
 const roboto = Roboto({
   variable: "--font-roboto",
   subsets: ["latin"],
+});
+// Persian content font: applied to RTL text (e.g. Farsi product details),
+// never to the default Latin UI.
+const vazirmatn = Vazirmatn({
+  variable: "--font-vazirmatn",
+  subsets: ["arabic", "latin"],
 });
 
 export const metadata: Metadata = {
@@ -35,7 +41,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
-      className={`${roboto.variable} ${manrope.variable} h-full antialiased roboto`}
+      className={`${roboto.variable} ${manrope.variable} ${vazirmatn.variable} h-full antialiased roboto`}
     >
       <body className="min-h-full flex flex-col scrollbar-thumb-transparent">
         {/* Applies the saved theme to <html> before the first paint, so the

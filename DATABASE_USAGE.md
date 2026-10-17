@@ -1,460 +1,246 @@
-# SiteHarvest Database Usage Guide
+# Shiva — Direct Darukade API Integration
 
-> **Audience:** AI agents, LLM tools, and developers reading this repository.
-> This file is the single source of truth for querying the SiteHarvest Postgres database (hosted on Supabase).
+> **Purpose:** Shiva retrieves product data directly from Darukade. The SiteHarvest catalog database is no longer part of the product-search or product-detail flow.
+>
+> **Primary goal:** Reduce response latency while preserving accurate product information, category search, ingredient search, product cards, and Shiva's safety pipeline.
 
-SiteHarvest crawls an e-commerce/catalog site (e.g. darukade.com) and normalizes it into a relational schema that an AI assistant can query to:
-
-- look up products by Persian or English name, brand, SKU or barcode,
-- read full ingredients (bilingual, with amounts/units),
-- navigate the nested category tree,
-- power "red flag" checks and supplement recommendations.
-
----
-
-## 1. Connection
-
-| Env var                     | Purpose                                                         |
-| --------------------------- | --------------------------------------------------------------- |
-| `SUPABASE_URL`              | `https://<project-ref>.supabase.co`                             |
-| `SUPABASE_SERVICE_ROLE_KEY` | Service-role key (server-side reads/writes)                     |
-| `SUPABASE_ACCESS_TOKEN`     | Personal access token — only used by `db:init` (Management API) |
-| `SUPABASE_ANON_KEY`         | Anon key — used only by the server-side auth client             |
-
-AI agents should read with the **service-role key** (or a Postgres connection string from the Supabase dashboard).
-
----
-
-## 2. Schema
-
-### `sources`
-
-One row per crawled website.
-
-| column         | type  | notes                                      |
-| -------------- | ----- | ------------------------------------------ |
-| `id`           | uuid  | primary key                                |
-| `base_url`     | text  | unique origin, e.g. `https://darukade.com` |
-| `name`         | text  | optional display name                      |
-| `technologies` | jsonb | detected stack                             |
-
-### `crawls`
-
-One row per crawl run.
-
-| column                                   | type    | notes                                               |
-| ---------------------------------------- | ------- | --------------------------------------------------- |
-| `id`                                     | uuid    | primary key (the "crawl id")                        |
-| `source_id`                              | uuid    | FK → `sources.id`                                   |
-| `status`                                 | text    | `running` \| `completed` \| `failed` \| `cancelled` |
-| `pages_seen`, `products_found`, `errors` | integer | counters                                            |
-| `metadata`                               | jsonb   | crawl options (maxPages, productOnly, …)            |
-
-### `pages`
-
-Raw crawled pages (HTML stored only if `--store-raw-html` was used).
-
-| column                                 | type  | notes                                                    |
-| -------------------------------------- | ----- | -------------------------------------------------------- |
-| `id`                                   | uuid  | primary key                                              |
-| `source_id`                            | uuid  | FK → `sources.id`                                        |
-| `url`                                  | text  | unique                                                   |
-| `canonical_url`                        | text  |                                                          |
-| `title`, `description`, `content_type` | text  |                                                          |
-| `raw_html`                             | text  | nullable                                                 |
-| `content_text`                         | text  | extracted main text                                      |
-| `partitions`                           | jsonb | structured content (metadata, JSON-LD, tables, sections) |
-
-### `categories`
-
-Self-referencing category **tree**.
-
-| column        | type  | notes                                                       |
-| ------------- | ----- | ----------------------------------------------------------- |
-| `id`          | uuid  | primary key                                                 |
-| `source_id`   | uuid  | FK → `sources.id`                                           |
-| `name`        | text  | category name (Persian on darukade)                         |
-| `slug`        | text  |                                                             |
-| `parent_id`   | uuid  | FK → `categories.id` (`NULL` = root) — **this is the tree** |
-| `parent_name` | text  | denormalized parent name                                    |
-| `source_url`  | text  |                                                             |
-| `breadcrumbs` | jsonb | `string[]` path from root to this category                  |
-
-- `unique(source_id, name)` — a category name is unique per source.
-- A product links to its **leaf** category only; ancestors are reached by walking `parent_id`.
-
-### `products`
-
-The core entity.
-
-| column                     | type        | notes                                                          |
-| -------------------------- | ----------- | -------------------------------------------------------------- |
-| `id`                       | uuid        | primary key                                                    |
-| `source_id`                | uuid        | FK → `sources.id`                                              |
-| `source_page_id`           | uuid        | FK → `pages.id`                                                |
-| `canonical_url`            | text        | product URL; unique per source                                 |
-| `name`                     | text        | primary display name (Persian on darukade)                     |
-| `name_en`                  | text        | English name (when available)                                  |
-| `name_fa`                  | text        | Persian name (when available)                                  |
-| `slug`                     | text        | URL-friendly name                                              |
-| `brand`                    | text        |                                                                |
-| `description`              | text        |                                                                |
-| `sku`                      | text        |                                                                |
-| `barcode`                  | text        | GTIN/EAN                                                       |
-| `price`                    | numeric     |                                                                |
-| `currency`                 | text        | `IRT` (Toman), `IRR` (Rial), `USD`, `EUR`                      |
-| `availability`             | text        | normalized: `InStock`, `OutOfStock`, `PreOrder`, …             |
-| `manufacturer`             | text        |                                                                |
-| `form`                     | text        | e.g. tablet, capsule, liquid                                   |
-| `package_size`             | text        | e.g. "30", "1 بطری (40 میلی لیتر)"                             |
-| `image_urls`               | jsonb       | `string[]`                                                     |
-| `attributes`               | jsonb       | extra key/value data (englishName, rate, ingredientServing, …) |
-| `source_payload`           | jsonb       | **full raw extracted product record** (see §5)                 |
-| `search_vector`            | tsvector    | generated — see §4                                             |
-| `created_at`, `updated_at` | timestamptz |                                                                |
-
-### `product_categories`
-
-M:N link from product → leaf category.
-
-| column        | type                                |
-| ------------- | ----------------------------------- |
-| `product_id`  | uuid FK → `products.id` (cascade)   |
-| `category_id` | uuid FK → `categories.id` (cascade) |
-
-Primary key: `(product_id, category_id)`.
-
-### `ingredients`
-
-Global ingredient dictionary (shared across products).
-
-| column            | type  | notes                                                |
-| ----------------- | ----- | ---------------------------------------------------- |
-| `id`              | uuid  | primary key                                          |
-| `canonical_name`  | text  | unique; **English when available**, else source name |
-| `persian_name`    | text  | Persian name (when available)                        |
-| `aliases`         | jsonb | `string[]`                                           |
-| `ingredient_type` | text  |                                                      |
-| `description`     | text  |                                                      |
-| `metadata`        | jsonb |                                                      |
-
-### `product_ingredients`
-
-Per-product ingredient amounts.
-
-| column          | type    | notes                             |
-| --------------- | ------- | --------------------------------- |
-| `product_id`    | uuid    | FK → `products.id` (cascade)      |
-| `ingredient_id` | uuid    | FK → `ingredients.id` (cascade)   |
-| `amount`        | numeric | quantity per serving              |
-| `unit`          | text    | `mg`, `g`, `IU`, …                |
-| `form`          | text    |                                   |
-| `raw_name`      | text    | label as shown on the source page |
-
-Primary key: `(product_id, ingredient_id)`.
-
-### Other tables
-
-- `technologies` — detected tech per name (shared).
-- `crawl_urls` — internal crawl queue (status, attempts, leases).
-- `crawl_errors` — logged crawl failures.
-
-### `chats` (application — one row per consultation)
-
-Created by the chat UI when a new consultation starts. The title and icon are
-chosen by the app: a deterministic lucide icon slug picked from the first
-message, and a short AI-written title that replaces the provisional one.
-
-| column                     | type        | notes                                                       |
-| -------------------------- | ----------- | ----------------------------------------------------------- |
-| `id`                       | uuid        | primary key                                                 |
-| `user_id`                  | uuid        | FK → `auth.users.id` (**cascade**) — the owner               |
-| `title`                    | text        | chat name shown in the header and history                   |
-| `icon`                     | text        | lucide slug, e.g. `head`, `lung`, `general` (list below)     |
-| `status`                   | text        | `open` \| `in_progress` \| `closed`                          |
-| `model`                    | text        | `flash` (fast) \| `pro` (deep thinking) — the latest mode    |
-| `created_at`, `updated_at` | timestamptz | `updated_at` maintained by the `set_updated_at` trigger      |
-
-### `chat_messages` (application — transcript)
-
-One row per turn, in stream order.
-
-| column       | type        | notes                                                             |
-| ------------ | ----------- | ----------------------------------------------------------------- |
-| `id`         | uuid        | primary key                                                       |
-| `chat_id`    | uuid        | FK → `chats.id` (**cascade**)                                     |
-| `role`       | text        | `user` \| `assistant`                                             |
-| `content`    | text        | the message text                                                  |
-| `thinking`   | text        | nullable — the model's reasoning trace, shown in the Thinking tab |
-| `status`     | text        | `complete` \| `error`                                             |
-| `safety`     | jsonb       | nullable — the deterministic safety assessment                    |
-| `products`   | jsonb       | nullable — the recommended products attached to the answer        |
-| `created_at` | timestamptz | ordering key (ascending)                                          |
-
-**RLS is enabled on both tables** (unlike the catalog tables, which have it
-disabled). Each has one policy allowing a signed-in user to `select`/`insert`/
-`update`/`delete` only rows they own. The app's data layer additionally uses the
-service role and always filters by `user_id` explicitly, so RLS is
-defence-in-depth. Signing out and back in as another user must never surface
-someone else's chats.
-
-`chats.icon` is a lucide icon **slug**, not a component name — the app maps
-slug → component in `components/history/HistoryCard.tsx` (`CHAT_ICON_COMPONENTS`).
-Known slugs: `general`, `head`, `eye`, `ear`, `stomach`, `back`, `joint`,
-`heart`, `skin`, `cold`, `lung`, `allergy`, `sleep`, `baby`, `infection`,
-`medicine`, `mind`.
-
----
-
-## 3. Relationships
+## 1. Architecture
 
 ```mermaid
-erDiagram
-  sources ||--o{ crawls : has
-  sources ||--o{ pages : has
-  sources ||--o{ categories : has
-  sources ||--o{ products : has
-  pages ||--o{ products : "source_page_id"
-  products ||--o{ product_categories : links
-  categories ||--o{ product_categories : links
-  categories ||--o{ categories : "parent_id (tree)"
-  products ||--o{ product_ingredients : has
-  ingredients ||--o{ product_ingredients : "ingredient_id"
-  auth_users ||--o{ chats : owns
-  chats ||--o{ chat_messages : has
+flowchart TD
+    A[User sends a message] --> B[Shiva backend]
+    B --> C[Safety assessment]
+    B --> D[Darukade product search]
+    D --> E[Darukade listing/search API]
+    E --> F[Select relevant candidates]
+    F --> G[Fetch product details when needed]
+    C --> H[Combine safety and product results]
+    G --> H
+    H --> I[AI explanation + product cards]
+    I --> J[User]
 ```
 
-- **Product → category:** a product links to its leaf category; traverse `categories.parent_id` to get the full path.
-- **Product → ingredients:** join through `product_ingredients`; the amount/unit live on the join row.
-- **User → chats → messages:** `chats.user_id` → `auth.users.id` and `chat_messages.chat_id` → `chats.id`, both `on delete cascade` (deleting a user removes their whole history).
+Safety assessment and product retrieval should run independently where possible. A product lookup must not delay the initial safety assessment, and the system must not wait for unnecessary product-detail requests.
 
----
+Darukade is the source of truth for catalog information. Shiva's existing application database may continue storing chats and messages, but it must not be required to retrieve catalog products.
 
-## 4. Search
+## 2. Darukade endpoints
 
-`products.search_vector` is a generated `tsvector` over:
-`name`, `name_en`, `brand` (weight A) + `sku`, `barcode`, `manufacturer` (weight B) + `description` (weight C).
+### Product listing and search
 
-Use the SQL function for ranked + fuzzy search:
+Known endpoint pattern:
 
-```sql
-select * from search_products('vitamin c');
-select * from search_products('ویتامین سی');
-select * from search_products('28993');   -- matches SKU-ish tokens
+```text
+https://darukade.com/_next/data/{BUILD_ID}/products.json?w={QUERY}
 ```
 
-It returns `(id, name, name_en, brand, description, rank)` and also falls back to trigram similarity on `name`, `name_en`, `brand`.
+Example:
 
----
-
-## 5. Common queries
-
-### 5.1 Full product with ingredients (flat join)
-
-```sql
-select
-  p.id,
-  p.canonical_url,
-  p.name, p.name_en, p.name_fa, p.slug,
-  p.brand, p.description, p.sku, p.barcode,
-  p.price, p.currency, p.availability,
-  p.manufacturer, p.form, p.package_size,
-  p.image_urls, p.attributes,
-  coalesce(jsonb_agg(
-    jsonb_build_object(
-      'name', i.canonical_name,
-      'name_en', i.canonical_name,
-      'name_fa', i.persian_name,
-      'amount', pi.amount, 'unit', pi.unit, 'form', pi.form,
-      'raw_name', pi.raw_name
-    ) order by pi.amount desc
-  ) filter (where i.id is not null), '[]'::jsonb) as ingredients
-from products p
-left join product_ingredients pi on pi.product_id = p.id
-left join ingredients i on i.id = pi.ingredient_id
-where p.id = :product_id
-group by p.id;
+```text
+https://darukade.com/_next/data/wDG6jXI_bYlEl2FE7Xpaf/products.json?w=Creatine
 ```
 
-> Simpler alternative for AI agents: `products.source_payload` already contains the full extracted record, including a `breadcrumbs` array, `ingredients` array (with `name`, `nameEn`, `nameFa`, `amount`, `unit`), `imageUrls`, and `attributes`. One `select source_payload from products where id = :id;` gives the raw structured JSON without joins.
+The build ID is not permanent. Discover the current identifier dynamically and handle changes gracefully.
 
-### 5.2 Category path of a product (ancestors)
+Listing results have been observed to include:
 
-```sql
-with recursive chain as (
-  select c.id, c.name, c.slug, c.parent_id, 0 as depth
-  from categories c
-  where c.id = (
-    select category_id from product_categories where product_id = :product_id limit 1
-  )
-  union all
-  select c.id, c.name, c.slug, c.parent_id, ch.depth + 1
-  from categories c
-  join chain ch on c.id = ch.parent_id
-)
-select id, name, slug, depth from chain order by depth desc;  -- root first
+- `id`
+- `faName`
+- `productURL`
+- `brandEnName`
+- `brandURL`
+- `image`
+- `orginalCost`
+- `discountCost`
+- `discountPercent`
+- `storeState`
+- `storeCount`
+- `rank`
+- `slaveTitle`
+- `slaveTypeTitle`
+- `slaveCount`
+- `quickBuy`
+- `freeDelivery`
+
+Response fields may vary. Validate the actual payload and handle missing data without crashing.
+
+Use listing results for initial product discovery. Do not fetch every product's full page for every search request.
+
+### Product details
+
+Product pages embed structured JSON inside:
+
+```html
+<script id="__NEXT_DATA__" type="application/json">
+  ...
+</script>
 ```
 
-### 5.3 All products in a category (including subcategories)
+The observed metadata path is:
 
-```sql
-with recursive subtree as (
-  select id from categories where id = :category_id
-  union all
-  select c.id from categories c join subtree s on c.parent_id = s.id
-)
-select p.id, p.name, p.name_en, p.brand, p.price, p.currency
-from products p
-join product_categories pc on pc.product_id = p.id
-join subtree s on s.id = pc.category_id;
+```text
+props.pageProps.productMataData
 ```
 
-### 5.4 Products containing an ingredient
+Parse the HTML response and extract the JSON instead of scraping visible text wherever structured data is available.
 
-```sql
-select p.id, p.name, p.name_en, p.brand, pi.amount, pi.unit
-from products p
-join product_ingredients pi on pi.product_id = p.id
-join ingredients i on i.id = pi.ingredient_id
-where i.canonical_name ilike '%iron%'
-   or i.persian_name ilike '%آهن%';
+Detailed data may include ingredients, serving amounts, package variants, prices, images, and expiration information. Verify each field before using it.
+
+### Related products
+
+Known endpoint:
+
+```text
+https://darukade.com/api/products/fetchrelated?id={PRODUCT_ID}
 ```
 
-### 5.5 Find by SKU or barcode
+The response may contain:
 
-```sql
-select * from products where sku = 'D-28993';
-select * from products where barcode = '6260000000000';
-```
+- `relatedProducts`
+- `sameBrandProducts`
+- `complementaryProducts`
+- `alternativeProducts`
+- `similarProducts`
 
-### 5.6 Category tree
+Use this endpoint when related-product discovery is useful. It is not required for every ordinary search.
 
-```sql
-select id, name, slug, parent_id, parent_name, breadcrumbs
-from categories
-where source_id = :source_id
-order by breadcrumbs;
-```
+## 3. Backend implementation
 
-> There is **no separate "parent categories" table**. A parent category is just a row whose `id` appears in another row's `parent_id` (top-level parents have `parent_id IS NULL`). Query the tree with the snippets below instead of joining across tables.
+Create a dedicated Darukade service module. All requests to Darukade must be made server-side.
 
-### 5.7 Top-level (parent) categories
+Recommended responsibilities:
 
-```sql
-select id, name, slug, breadcrumbs
-from categories
-where source_id = :source_id and parent_id is null
-order by name;
-```
+- `searchProducts(query, options)` — fetch listing results.
+- `getProductDetails(productUrl)` — fetch and parse embedded product metadata.
+- `getRelatedProducts(productId)` — retrieve related-product groups.
+- `searchProductsByCategory(category, options)` — use verified Darukade category navigation or listing parameters.
+- `searchProductsByIngredient(ingredient, options)` — find candidates using source-supported search and inspect structured ingredient data where necessary.
 
-### 5.8 Direct subcategories of a category
+These are recommended interfaces, not assertions that the functions already exist. Adapt their names to the repository's current conventions.
 
-```sql
-select id, name, slug, breadcrumbs
-from categories
-where parent_id = :category_id
-order by name;
-```
+### Search pipeline
 
-### 5.9 All descendants of a category (sub + sub-sub, …)
+1. Normalize the user's search query.
+2. Request the relevant Darukade listing results.
+3. Parse and validate the response.
+4. Rank the returned candidates using deterministic rules.
+5. Fetch detailed product data only for candidates that need it.
+6. Apply ingredient and safety constraints using verified data.
+7. Return a small set of products to the UI and AI response layer.
 
-```sql
-with recursive subtree as (
-  select id from categories where id = :category_id
-  union all
-  select c.id from categories c join subtree s on c.parent_id = s.id
-)
-select c.id, c.name, c.slug, c.parent_id, c.breadcrumbs
-from categories c
-join subtree s on s.id = c.id;
-```
+Use bounded concurrency, request timeouts, and short-lived request deduplication to avoid duplicate requests for the same product.
 
----
+Do not download all 7,000+ products for a user query. Do not pass the complete catalog into the AI prompt.
 
-## 6. Field semantics (important for AI agents)
+## 4. Latency requirements
 
-- **Bilingual names:** `name` is the source's primary display name (Persian on darukade). `name_en` and `name_fa` may be identical to `name` or `null`. Prefer `name_en` for English matching, `name`/`name_fa` for Persian.
-- **Ingredients:** `ingredients.canonical_name` is English when the source provides it; `persian_name` is the Persian label. Amount/unit are per-serving and live on `product_ingredients`.
-- **Availability:** normalized to short tokens — `InStock`, `OutOfStock`, `PreOrder`, `Discontinued`, `SoldOut`, etc. (the `schema.org` URL prefix is stripped).
-- **Currency caveat:** some Persian sites list prices in Toman but label them `IRR` in their JSON-LD. Verify per source; `IRT` = Toman, `IRR` = Rial (1 Toman = 10 Rial).
-- **Categories:** `product_categories` holds only the leaf. Use `parent_id` recursion for ancestors. The full path is also stored in `categories.breadcrumbs` (jsonb array, root→leaf).
+The current 8–10 second response time is unacceptable for the intended pharmacy workflow. The direct API migration must be measured rather than assumed to solve the delay.
 
----
+- Run safety assessment and product retrieval in parallel.
+- Avoid sequential requests when data can be fetched independently.
+- Use listing data for product cards when it contains all required fields.
+- Fetch product details only when necessary for ingredients, serving amounts, warnings, or other missing information.
+- Deduplicate concurrent requests for the same URL.
+- Set bounded timeouts and handle failed upstream requests gracefully.
+- Avoid calling the related-products endpoint unless the user request benefits from it.
+- Stream the assistant response where supported by the existing UI.
+- Record timings for listing requests, detail requests, safety assessment, AI generation, and total response time.
 
-## 7. Supabase JS examples (for AI agents)
+If Darukade is slow or unavailable, return an honest partial result or a clear retry message. Never fabricate product details or claim that unverified product data is current.
 
-```js
-import { createClient } from "@supabase/supabase-js";
-const sb = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY,
-);
+Do not introduce a replacement catalog database, a background catalog synchronization job, or a local full-catalog copy as part of this migration.
 
-// Full product + ingredients + leaf category
-const { data: product } = await sb
-  .from("products")
-  .select(
-    "*, product_ingredients(amount, unit, form, raw_name, ingredient:ingredients(canonical_name, persian_name, aliases)), product_categories(category:categories(id, name, slug, parent_id, parent_name, breadcrumbs))",
-  )
-  .eq("id", productId)
-  .limit(1)
-  .single();
+## 5. Product data and accuracy
 
-// Search (uses the search_products RPC)
-const { data: hits } = await sb.rpc("search_products", {
-  search_query: "ویتامین سی",
-  result_limit: 10,
-});
-```
+Map Darukade's source fields into Shiva's existing product-card interface.
 
----
+- Use source names and brand information as returned.
+- Preserve the original Persian values.
+- Use English names only when the source provides them or a separately verified translation exists.
+- Use source prices and clearly define which variant they refer to.
+- Do not assume the original price is the current price.
+- Do not assume a listing result means the product is in stock.
+- Do not invent barcodes, ingredients, manufacturers, descriptions, or category relationships.
+- If ingredient information is unavailable, mark it as unknown rather than claiming the product does not contain an ingredient.
 
-## 8. JSON export
+Preserve the current product-card design and detail views. Change the data source, not the established UI design system.
 
-`npm run dev -- export products.json --limit 10000` writes `{ "products": [...] }` where each product has:
+## 6. Category and ingredient search
 
-```json
-{
-  "id": "uuid",
-  "url": "https://...",
-  "name": "قرص آهن",
-  "name_en": "Ferrous Sulfate Tablet",
-  "name_fa": "قرص آهن",
-  "slug": "ferrous-sulfate-tablet",
-  "brand": "…",
-  "description": "…",
-  "sku": "24101",
-  "barcode": "6260000000000",
-  "price": 120000,
-  "currency": "IRT",
-  "availability": "InStock",
-  "manufacturer": "…",
-  "form": "tablet",
-  "package_size": "30",
-  "images": ["https://..."],
-  "categories": [
-    { "id": "…", "name": "…", "parent_id": null, "breadcrumbs": ["…"] }
-  ],
-  "ingredients": [
-    {
-      "name": "Iron",
-      "name_en": "Iron",
-      "name_fa": "آهن",
-      "amount": 50,
-      "unit": "mg"
-    }
-  ],
-  "attributes": {}
-}
-```
+Use Darukade's actual category data and supported search parameters.
 
----
+Do not invent an undocumented category endpoint or build an authoritative hierarchy from product-name guesses. Inspect category pages, embedded page data, navigation information, and network requests to identify the correct structure.
 
-## 9. CLI commands that write this data
+Ingredient search must use structured ingredient information when available. A product listing's name alone is not proof that it contains a particular ingredient.
 
-| Command                                             | Effect                                            |
-| --------------------------------------------------- | ------------------------------------------------- |
-| `db:init`                                           | apply migrations (schema + RPCs)                  |
-| `crawl <url> --product-only --all --store-raw-html` | crawl a site into the schema                      |
-| `rebuild-categories <source-id>`                    | rebuild the nested category tree from breadcrumbs |
-| `export <file> --limit N`                           | dump normalized products to JSON                  |
+If detailed ingredient data requires a product-page request, fetch it selectively and communicate uncertainty when the source does not provide enough information.
+
+## 7. Database removal
+
+The SiteHarvest catalog database must no longer be used by Shiva.
+
+### Remove from the product flow
+
+Remove catalog reads, writes, and synchronization dependencies involving these SiteHarvest tables, if they exist:
+
+- `sources`
+- `crawls`
+- `pages`
+- `categories`
+- `products`
+- `product_categories`
+- `ingredients`
+- `product_ingredients`
+- `technologies`
+- `crawl_urls`
+- `crawl_errors`
+
+Also remove catalog-specific RPCs, triggers, indexes, and migration dependencies that are no longer needed.
+
+Before dropping anything, inspect the actual migrations, foreign keys, views, functions, and application references. Only remove objects belonging to the retired SiteHarvest catalog integration.
+
+### Preserve application data
+
+**Do not drop `chats` or `chat_messages`.** They belong to Shiva's application and store consultation history, not the SiteHarvest product catalog.
+
+Preserve authentication tables, user records, and any other tables required by the running application.
+
+### Safe migration sequence
+
+1. Find every application query and server function that reads the SiteHarvest catalog.
+2. Replace those calls with the Darukade service.
+3. Update product cards, detail views, category search, and ingredient search.
+4. Remove catalog-specific environment variables and code that are no longer needed.
+5. Verify the application no longer depends on the catalog tables or RPCs.
+6. Test the full product and safety workflows.
+7. Drop the obsolete catalog objects through a reviewed database migration.
+8. Verify chat history, authentication, and unrelated features still work.
+
+Do not delete tables before their dependencies have been migrated. Removing a table does not automatically remove every application-level reference to it.
+
+## 8. Security and reliability
+
+- Keep all Darukade requests on the server.
+- Do not expose privileged credentials to the browser.
+- Validate URLs before fetching product pages; restrict requests to the intended Darukade host to avoid server-side request forgery.
+- Use timeouts, bounded retries, and controlled concurrency.
+- Handle malformed JSON, changed response shapes, missing products, and upstream errors.
+- Respect source access rules and applicable rate limits.
+- Never treat AI-generated product details as a substitute for source data.
+
+## 9. Acceptance criteria
+
+The migration is complete when:
+
+- [ ] Shiva retrieves product listings directly from Darukade.
+- [ ] Product details and ingredients are fetched directly when needed.
+- [ ] Product cards display source-backed information.
+- [ ] Category and ingredient search work without SiteHarvest catalog tables.
+- [ ] The safety pipeline still runs independently of product retrieval.
+- [ ] No product-search path depends on the retired catalog database.
+- [ ] `chats`, `chat_messages`, authentication, and user history remain intact.
+- [ ] The project passes tests, type checks, linting, and production build.
+- [ ] Response timing is measured before and after the migration.
+- [ ] Failed or incomplete upstream requests do not generate fabricated product information.
+
+**Architecture rule:** Darukade is the live catalog source. Shiva's application database stores application data, not a duplicated SiteHarvest product catalog.

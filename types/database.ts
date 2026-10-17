@@ -143,6 +143,33 @@ export interface IngredientRef {
   unit: string | null;
   form: string | null;
   raw_name: string | null;
+  /** Source-provided daily requirement string ("dailyNeeded"), when present. */
+  daily_needed?: string | null;
+}
+
+/**
+ * One selectable variant of a product (a Darukade "slave" item).
+ * App-layer extension — not a catalog-table column.
+ */
+export interface ProductVariant {
+  /** Stable source variant id. */
+  id: string;
+  title: string | null;
+  productCode: string | null;
+  color: string | null;
+  isMaster: boolean;
+  originalPrice: number | null;
+  price: number | null;
+  discountPercent: number | null;
+  availability: Availability | null;
+  image_urls: string[];
+}
+
+/** A structured source property (e.g. نوع محصول، سایز). */
+export interface ProductProperty {
+  title: string;
+  value: string | null;
+  url: string | null;
 }
 
 /** A category flattened for a product. */
@@ -155,10 +182,32 @@ export interface CategoryRef {
   breadcrumbs: string[] | null;
 }
 
-/** A product with its leaf categories and ingredients joined in. */
+/**
+ * A product with its leaf categories and ingredients joined in, plus
+ * app-layer fields that come straight from the live Darukade payloads
+ * (never from the retired catalog tables).
+ */
 export interface ProductDetails extends Product {
   ingredients: IngredientRef[];
   categories: CategoryRef[];
+  /** Price before discount (Toman), when the source reports a real discount. */
+  originalPrice?: number | null;
+  /** Source discount percentage. */
+  discountPercent?: number | null;
+  /** Persian brand name when the source provides it. */
+  brand_fa?: string | null;
+  /** Selectable variants with their own prices/availability. */
+  variants?: ProductVariant[];
+  /** Structured specifications ("properties"). */
+  properties?: ProductProperty[];
+  /** Serving description, e.g. "به ازاي هر 1 پيمانه (5 گرم)". */
+  ingredientServing?: string | null;
+  /**
+   * True when the full source product page was fetched and its structured
+   * ingredient list was preserved. False means ingredient data was never
+   * retrieved (so "no ingredients" must not be presented as a fact).
+   */
+  detailLoaded?: boolean;
 }
 
 /** A category with its children nested in. */

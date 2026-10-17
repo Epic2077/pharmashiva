@@ -32,6 +32,10 @@ export interface Message {
   productsDatabaseAvailable?: boolean;
   /** Queries that were executed against the database. */
   productsQueries?: string[];
+  /** True when product cards were withheld by a safety/relevance gate. */
+  productsSuppressed?: boolean;
+  /** Machine-readable reason code when cards are withheld. */
+  productsGateReason?: string;
   /** Fatal error for this turn. */
   error?: string | null;
   /** Set once the message has been written to Supabase. */

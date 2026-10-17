@@ -1,16 +1,16 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Package, Tag } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Package, ShoppingBag, Tag } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { localizedName, type LanguageCode } from "@/lib/i18n";
 import { primaryProductImage } from "@/lib/product-images";
 import type { ProductDetails } from "@/types/database";
-import { Badge } from "../ui/badge";
-import { redirect } from "next/navigation";
 
 const HOLD_DURATION = 450;
-const MAX_VISIBLE_INGREDIENTS = 3;
+/** Up to two meaningful ingredients, in the source's own order. */
+const MAX_VISIBLE_INGREDIENTS = 2;
 
 interface ProductCardProps {
   product: ProductDetails;
@@ -27,6 +27,7 @@ export default function ProductCard({
   language,
   onOpen,
 }: ProductCardProps) {
+  const router = useRouter();
   const name = localizedName(product, language);
   const secondary =
     language === "en"
@@ -38,6 +39,10 @@ export default function ProductCard({
         : undefined;
 
   const imageUrl = primaryProductImage(product.image_urls);
+
+  // Verified category label: the server-computed localized name when present,
+  // otherwise the source category from the navigation tree.
+  const categoryLabel = categoryName ?? product.categories[0]?.name ?? null;
 
   const [holding, setHolding] = useState(false);
   const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -66,6 +71,19 @@ export default function ProductCard({
     }, HOLD_DURATION);
   }
 
+  function handleOpen() {
+    // The source has no ID-only product URL, so the canonical URL travels
+    // with the navigation.
+    const url = product.canonical_url;
+    const href = url
+      ? `/search/products/${product.id}?url=${encodeURIComponent(url)}`
+      : `/search/products/${product.id}`;
+    router.push(href);
+  }
+
+  // Structured ingredients were fetched only when `detailLoaded` is true;
+  // otherwise we must not imply the product has no ingredients.
+  const ingredientsKnown = product.detailLoaded !== false;
   const visibleIngredients = product.ingredients.slice(
     0,
     MAX_VISIBLE_INGREDIENTS,
@@ -79,7 +97,7 @@ export default function ProductCard({
       onPointerLeave={clearHold}
       onPointerCancel={clearHold}
       onContextMenu={(event) => event.preventDefault()}
-      onClick={() => redirect(`/search/products/${product.id}`)}
+      onClick={handleOpen}
       className={cn(
         "flex touch-pan-y select-none gap-3 rounded-2xl border bg-card p-3 shadow-sm transition-colors hover:border-primary/25 sm:gap-3.5 sm:p-4",
         holding && "scale-[0.99] opacity-90",
@@ -94,9 +112,12 @@ export default function ProductCard({
             loading="lazy"
             className="size-20 shrink-0 self-start rounded-xl border border-border/70 bg-muted object-cover sm:size-24"
           />
-          {product.brand != null && (
-            <Badge className="flex gap-1.5 text-xs">{product.brand}</Badge>
-          )}
+          {product.brand ? (
+            <span className="inline-flex max-w-full items-center gap-1 truncate rounded-full border border-border bg-muted/60 px-2 py-1 text-[11px] font-medium text-muted-foreground">
+              <ShoppingBag className="size-3 shrink-0" />
+              <span className="truncate">{product.brand}</span>
+            </span>
+          ) : null}
         </div>
       ) : (
         <span className="flex size-20 shrink-0 self-start items-center justify-center rounded-xl border border-border/70 bg-muted text-muted-foreground sm:size-24">
@@ -128,10 +149,10 @@ export default function ProductCard({
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5">
-          {categoryName ? (
-            <span className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/60 px-2 py-1 text-[11px] font-medium text-muted-foreground">
-              <Tag className="size-3" />
-              {categoryName}
+          {categoryLabel ? (
+            <span className="inline-flex max-w-full items-center gap-1 truncate rounded-full border border-border bg-muted/60 px-2 py-1 text-[11px] font-medium text-muted-foreground">
+              <Tag className="size-3 shrink-0" />
+              <span className="truncate">{categoryLabel}</span>
             </span>
           ) : null}
         </div>
@@ -163,7 +184,10 @@ export default function ProductCard({
             {hiddenCount > 0 ? (
               <button
                 type="button"
-                onClick={onOpen}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onOpen();
+                }}
                 aria-label={`Show all ${product.ingredients.length} ingredients`}
                 className="rounded-full border border-dashed border-border px-2.5 py-1 text-[11px] font-semibold text-primary transition-colors hover:bg-primary/5"
               >
@@ -171,7 +195,11 @@ export default function ProductCard({
               </button>
             ) : null}
           </div>
-        ) : null}
+        ) : ingredientsKnown ? null : (
+          <p className="mt-0.5 text-[11px] text-muted-foreground/80">
+            Ingredients unavailable
+          </p>
+        )}
       </div>
     </article>
   );

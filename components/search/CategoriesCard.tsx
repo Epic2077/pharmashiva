@@ -26,7 +26,7 @@ export default function CategoriesCard({
       <span className="min-w-0 flex-1">
         <span className="block truncate text-base font-semibold">{title}</span>
         <span className="block text-sm text-muted-foreground">
-          {count} products
+          {count > 0 ? `${count} subcategories` : "Browse products"}
         </span>
       </span>
       <ChevronRight className="size-5 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 motion-reduce:transition-none" />

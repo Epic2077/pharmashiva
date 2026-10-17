@@ -11,7 +11,7 @@ interface ChatHeaderProps {
 
 export function ChatHeader({ title, subtitle, user }: ChatHeaderProps) {
   return (
-    <header className="flex shrink-0 items-center gap-4 py-3 justify-between">
+    <header className="flex shrink-0 items-center gap-4 py-3 justify-between max-w-screen overflow-x-hidden">
       <BackLink title={title} subtitle={subtitle} />
       <ProfileNav isLoggedIn={Boolean(user)} user={user} />
     </header>

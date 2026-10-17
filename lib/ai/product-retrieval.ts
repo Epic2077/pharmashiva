@@ -1,29 +1,73 @@
 /**
- * Database-backed product retrieval, filtering and ranking.
+ * Product retrieval, filtering and ranking against the live Darukade source.
  *
- * The database is the only source of product facts. Flow:
- *   1. Build 1-3 search queries from the validated case facts.
- *   2. Query the catalog (existing `search_products` RPC) in parallel.
- *   3. Apply HARD constraints first (allergy exclusions).
- *   4. Rank the survivors deterministically and attach a traceable reason.
+ * Darukade is the only source of product facts. Flow:
+ *   1. Build 1-3 search queries from the validated case facts (never the raw
+ *      user sentence — that path produced irrelevant promoted products).
+ *   2. Query the Darukade listing/search API in parallel.
+ *   3. Fetch structured details (ingredients, specs) for the top candidates.
+ *   4. Apply HARD constraints first (allergy exclusions).
+ *   5. Apply the deterministic relevance gate (see ./relevance-gate.ts) so a
+ *      candidate can never be shown just because the catalog returned it.
+ *   6. Rank the survivors deterministically and attach a traceable reason.
  *
  * Nothing here calls the model, and nothing here can invent a product.
+ * Darukade IO and category translation are injectable so the gate logic can
+ * be integration-tested with mocked catalog responses.
  */
 
-import { searchCatalog, searchCatalogAi } from "@/lib/supabase";
-import { localizeCategoryName } from "@/lib/i18n-server";
+import { searchProducts, enrichProductDetails } from "@/lib/darukade/service";
 import type { LanguageCode } from "@/lib/i18n";
 import type {
   CaseFacts,
   ProductCompatibility,
   ProductRecommendation,
+  RelevanceVerdict,
+  ShoppingIntent,
 } from "@/types/ai";
 import type { ProductDetails } from "@/types/database";
 import { ingredientMatchesAllergen } from "./ingredients";
+import {
+  evaluateCandidateRelevance,
+  inferShoppingIntent,
+  meaningfulQueryTokens,
+  symptomDomains,
+} from "./relevance-gate.ts";
 
 const MAX_QUERIES = 3;
 const PER_QUERY_LIMIT = 8;
 const MAX_RESULTS = 6;
+
+export interface RetrievalDependencies {
+  /** Listing search; returns hits keyed by product id. Injectable for tests. */
+  search?: (
+    query: string,
+    options: { limit: number; detailLimit: number },
+  ) => Promise<{ hits: Array<{ product: ProductDetails; rank: number }> }>;
+  /** Detail enrichment; injectable for tests. */
+  enrich?: (
+    products: ProductDetails[],
+    options: { detailLimit: number; budgetMs: number },
+  ) => Promise<{ products: ProductDetails[] }>;
+  /** Leaf-category localization; injectable for tests. */
+  localizeCategory?: (
+    category: { name: string } | undefined,
+    language: LanguageCode,
+  ) => Promise<string | null>;
+}
+
+const defaultDependencies: Required<RetrievalDependencies> = {
+  search: (query, options) =>
+    searchProducts(query, {
+      limit: options.limit,
+      detailLimit: options.detailLimit,
+    }),
+  enrich: (products, options) =>
+    enrichProductDetails(products, options).then((result) => ({
+      products: result.products,
+    })),
+  localizeCategory: async (category) => category?.name ?? null,
+};
 
 export interface ProductRetrievalResult {
   products: ProductRecommendation[];
@@ -31,6 +75,14 @@ export interface ProductRetrievalResult {
   databaseAvailable: boolean;
   /** Queries that were actually executed. */
   queries: string[];
+  /** Shopping intent derived from the case (observability). */
+  scope: ShoppingIntent;
+  /** Machine-readable relevance decision per candidate (logs/tests). */
+  decisions: RelevanceVerdict[];
+  /** True when an allergy constraint exists but ingredient data was missing. */
+  missingIngredientData: boolean;
+  /** True when no queryable intent existed, so nothing was searched. */
+  noQueryableIntent: boolean;
 }
 
 /** Ingredient names we can compare an allergen against for a product. */
@@ -45,36 +97,39 @@ function ingredientNames(product: ProductDetails): string[] {
   );
 }
 
-function buildQueries(facts: CaseFacts, message: string): string[] {
+function buildQueries(facts: CaseFacts): string[] {
   // When the model produced product queries they are the *only* thing we search
   // with: they are short product-class / ingredient / category phrases, whereas
-  // `searchTerms` is the customer's own sentence. Mixing the two would OR the
-  // sentence's noise tokens ("10", "has", "the") into the results.
+  // `searchTerms` is the customer's own symptom phrasing. The raw user message
+  // is NEVER used as a query: sentence queries matched catalog noise (e.g.
+  // promoted beauty products for "Ali's eyes are red").
   const raw =
     facts.productQueries.length > 0
       ? [...facts.productQueries]
-      : [...facts.searchTerms, facts.goal ?? "", facts.category ?? ""];
+      : [...facts.searchTerms, facts.category ?? ""];
   const seen = new Set<string>();
   const queries: string[] = [];
   for (const value of raw) {
     const trimmed = value.trim().replace(/\s+/g, " ");
     const key = trimmed.toLowerCase();
     if (trimmed.length < 2 || seen.has(key)) continue;
+    // Reject free-form sentences: a usable query is a short phrase whose
+    // meaningful tokens dominate. A sentence like "ali's eyes are red" is
+    // mostly noise and must never reach the catalog as a query.
+    const words = trimmed
+      .split(" ")
+      .filter((word) => /[\p{L}\p{N}]/u.test(word));
+    if (words.length === 0 || words.length > 5) continue;
+    const meaningful = meaningfulQueryTokens([trimmed]).length;
+    if (meaningful === 0 || meaningful / words.length < 0.5) continue;
     seen.add(key);
     queries.push(trimmed.slice(0, 120));
     if (queries.length >= MAX_QUERIES) break;
   }
-  if (queries.length === 0) {
-    const fallback = message.trim().replace(/\s+/g, " ").slice(0, 120);
-    if (fallback) queries.push(fallback);
-  }
   return queries;
 }
 
-function buildReason(
-  product: ProductDetails,
-  facts: CaseFacts,
-): string {
+function buildReason(product: ProductDetails, facts: CaseFacts): string {
   const bits: string[] = [];
   const term =
     facts.productQueries[0] ??
@@ -87,7 +142,10 @@ function buildReason(
   const notable = product.ingredients
     .filter((ingredient) => ingredient.amount != null && ingredient.name)
     .slice(0, 3)
-    .map((ingredient) => `${ingredient.name} ${ingredient.amount}${ingredient.unit ?? ""}`)
+    .map(
+      (ingredient) =>
+        `${ingredient.name} ${ingredient.amount}${ingredient.unit ?? ""}`,
+    )
     .join(", ");
   if (notable) bits.push(`contains ${notable}`);
 
@@ -99,8 +157,12 @@ function scoreProduct(
   rank: number,
   compatibility: ProductCompatibility,
   hasAllergyConstraint: boolean,
+  relevanceTokens: number,
 ): number {
   let score = rank;
+  // Relevance dominates: a less-popular but genuinely relevant product must
+  // outrank a promoted but unrelated one.
+  if (relevanceTokens > 0) score += 0.5 + relevanceTokens * 0.3;
   if (product.ingredients.length > 0) score += 1;
   if (product.image_urls?.some((url) => url && url.trim())) score += 0.5;
   if (product.price != null) score += 0.3;
@@ -110,30 +172,6 @@ function scoreProduct(
   return Number(score.toFixed(3));
 }
 
-/**
- * Localize a leaf-category name without blocking the response. Translation is a
- * network call on a cold cache, so a slow translation falls back to the raw
- * stored name rather than delaying product cards.
- */
-async function localizeCategorySafe(
-  category: { name: string } | undefined,
-  language: LanguageCode,
-): Promise<string | null> {
-  if (!category) return null;
-  if (language === "fa") return category.name;
-
-  try {
-    return await Promise.race([
-      localizeCategoryName(category, language),
-      new Promise<string>((resolve) => {
-        setTimeout(() => resolve(category.name), 700);
-      }),
-    ]);
-  } catch {
-    return category.name;
-  }
-}
-
 export async function retrieveProducts(params: {
   facts: CaseFacts;
   message: string;
@@ -141,21 +179,34 @@ export async function retrieveProducts(params: {
   provisional: boolean;
   signal: AbortSignal;
   limit?: number;
+  dependencies?: RetrievalDependencies;
 }): Promise<ProductRetrievalResult> {
   const { facts, message, language, provisional, signal } = params;
   const limit = params.limit ?? MAX_RESULTS;
+  const deps = { ...defaultDependencies, ...params.dependencies };
 
-  const queries = buildQueries(facts, message);
+  const intent = inferShoppingIntent(facts, message);
+  const queries = buildQueries(facts);
   if (queries.length === 0) {
-    return { products: [], databaseAvailable: true, queries: [] };
+    // Nothing queryable: return no products rather than search with noise.
+    return {
+      products: [],
+      databaseAvailable: true,
+      queries: [],
+      scope: intent,
+      decisions: [],
+      missingIngredientData: false,
+      noQueryableIntent: true,
+    };
   }
 
-  // The AI engine is only appropriate for short product-class queries the model
-  // produced. The customer's own sentence goes through the site search instead.
-  const useAi = facts.productQueries.length > 0;
-  const searchFn = useAi ? searchCatalogAi : searchCatalog;
+  // Both AI-proposed and symptom-based queries start with listing-only
+  // searches; structured details are fetched once for the merged candidates
+  // below (bounded and deduplicated).
   const settled = await Promise.allSettled(
-    queries.map((query) => searchFn(query, PER_QUERY_LIMIT)),
+    queries.map((query) =>
+      deps.search(query, { limit: PER_QUERY_LIMIT, detailLimit: 0 }),
+    ),
   );
 
   const databaseAvailable = settled.some(
@@ -163,13 +214,10 @@ export async function retrieveProducts(params: {
   );
 
   // Merge hits by product id, keeping the best (highest) rank.
-  const byId = new Map<
-    string,
-    { product: ProductDetails; rank: number }
-  >();
+  const byId = new Map<string, { product: ProductDetails; rank: number }>();
   for (const result of settled) {
     if (result.status !== "fulfilled") continue;
-    for (const hit of result.value) {
+    for (const hit of result.value.hits) {
       const existing = byId.get(hit.product.id);
       if (!existing || hit.rank > existing.rank) {
         byId.set(hit.product.id, { product: hit.product, rank: hit.rank });
@@ -180,21 +228,61 @@ export async function retrieveProducts(params: {
   const allergies = facts.allergies.filter(Boolean);
   const hasAllergyConstraint = allergies.length > 0;
 
+  // Fetch structured details (ingredients, categories, specs) for the top
+  // candidates only — bounded concurrency, timeouts and deduplication are
+  // handled inside the Darukade service. Products that stay listing-only are
+  // kept, but allergy compatibility is reported as unknown for them.
+  const merged = [...byId.values()];
+  const { products: enrichedProducts } = await deps.enrich(
+    merged.map((entry) => entry.product),
+    { detailLimit: 10, budgetMs: 6_000 },
+  );
+  const enrichedById = new Map(
+    enrichedProducts.map((product) => [product.id, product]),
+  );
+
+  const queryTokens = meaningfulQueryTokens(queries);
+  const domains = symptomDomains(facts);
+
   const candidates: Array<{
     product: ProductDetails;
     rank: number;
     compatibility: ProductCompatibility;
     warnings: string[];
+    matchedTokens: string[];
   }> = [];
+  const decisions: RelevanceVerdict[] = [];
+  let missingIngredientData = false;
 
-  for (const { product, rank } of byId.values()) {
+  for (const { product: summaryProduct, rank } of merged) {
+    const product = enrichedById.get(summaryProduct.id) ?? summaryProduct;
     const names = ingredientNames(product);
 
     // Hard constraint: excluded if it contains a known allergen.
     const containsAllergen = allergies.some((allergen) =>
       ingredientMatchesAllergen(allergen, names),
     );
-    if (containsAllergen) continue;
+    if (containsAllergen) {
+      decisions.push({
+        productId: product.id,
+        pass: false,
+        code: "allergy_conflict",
+        reason: "Product contains an ingredient the customer is allergic to.",
+        matchedTokens: [],
+      });
+      continue;
+    }
+
+    // Deterministic relevance gate: a catalog result must be justifiable
+    // from the case (e.g. a brightening serum must not appear for red eyes).
+    const verdict = evaluateCandidateRelevance({
+      product,
+      queryTokens,
+      domains,
+      intent,
+    });
+    decisions.push(verdict);
+    if (!verdict.pass) continue;
 
     const warnings: string[] = [];
     let compatibility: ProductCompatibility = "compatible";
@@ -202,12 +290,27 @@ export async function retrieveProducts(params: {
     if (hasAllergyConstraint && product.ingredients.length === 0) {
       // Incomplete ingredient data means we cannot claim allergy safety.
       compatibility = "unknown";
+      missingIngredientData = true;
       warnings.push(
         "Ingredient list is incomplete, so allergy compatibility cannot be confirmed.",
       );
     }
 
-    candidates.push({ product, rank, compatibility, warnings });
+    if (facts.medications.length > 0) {
+      // Interaction checking requires clinical reference data the catalog
+      // does not carry — say so instead of implying compatibility.
+      warnings.push(
+        "Interactions with the customer's current medicines have not been verified for this product — check a reliable reference before recommending.",
+      );
+    }
+
+    candidates.push({
+      product,
+      rank,
+      compatibility,
+      warnings,
+      matchedTokens: verdict.matchedTokens,
+    });
   }
 
   const ranked = candidates
@@ -218,6 +321,7 @@ export async function retrieveProducts(params: {
         candidate.rank,
         candidate.compatibility,
         hasAllergyConstraint,
+        candidate.matchedTokens.length,
       ),
     }))
     .sort((a, b) => b.score - a.score)
@@ -226,7 +330,7 @@ export async function retrieveProducts(params: {
   const products = await Promise.all(
     ranked.map(async (candidate) => ({
       product: candidate.product,
-      categoryName: await localizeCategorySafe(
+      categoryName: await deps.localizeCategory(
         candidate.product.categories[0],
         language,
       ),
@@ -242,10 +346,18 @@ export async function retrieveProducts(params: {
   // are not individually aborted.
   void signal;
 
-  return { products, databaseAvailable, queries };
+  return {
+    products,
+    databaseAvailable,
+    queries,
+    scope: intent,
+    decisions,
+    missingIngredientData,
+    noQueryableIntent: false,
+  };
 }
 
 /** Export for the pipeline to show what queries would have been used. */
-export function buildProductQueriesForFacts(facts: CaseFacts, message: string = ""): string[] {
-  return buildQueries(facts, message).slice(0, 3);
+export function buildProductQueriesForFacts(facts: CaseFacts): string[] {
+  return buildQueries(facts).slice(0, 3);
 }

@@ -53,7 +53,10 @@ function readHistory(value: unknown): DeepSeekMessage[] {
     if (!entry || typeof entry !== "object") continue;
     const role = (entry as { role?: unknown }).role;
     const content = (entry as { content?: unknown }).content;
-    if ((role !== "user" && role !== "assistant") || typeof content !== "string") {
+    if (
+      (role !== "user" && role !== "assistant") ||
+      typeof content !== "string"
+    ) {
       continue;
     }
     const trimmed = content.trim().slice(0, MAX_MESSAGE_LENGTH);
@@ -124,7 +127,8 @@ export async function POST(request: NextRequest) {
     return jsonError("A non-empty message is required", 400);
   }
 
-  const chatIdRaw = typeof record.chatId === "string" ? record.chatId.trim() : "";
+  const chatIdRaw =
+    typeof record.chatId === "string" ? record.chatId.trim() : "";
   const chatId = chatIdRaw && isUuid(chatIdRaw) ? chatIdRaw : null;
   const memory = chatId ? await getChatMemory(user.id, chatId) : null;
 
@@ -173,11 +177,12 @@ export async function POST(request: NextRequest) {
               }
             }
           },
-          log: (timings) => {
-            // Latency only — never logs conversation content.
+          log: (report) => {
+            // Rule ids, product ids, codes and latency only — never logs
+            // conversation content.
             console.info(
-              "[chat] timings(ms)",
-              JSON.stringify(timings),
+              "[chat] report",
+              JSON.stringify(report),
               isDeepSeekConfigured() ? "deepseek" : "deterministic-only",
             );
           },
