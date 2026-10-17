@@ -222,6 +222,7 @@ function applyEvent(chatId: string, messageId: string, event: ChatEvent) {
         productsQueries: event.queries,
         productsSuppressed: event.suppressed,
         productsGateReason: event.gateReason,
+        productsDisplayPolicy: event.displayPolicy,
       });
       break;
     case "text":

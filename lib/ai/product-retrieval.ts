@@ -97,6 +97,41 @@ function ingredientNames(product: ProductDetails): string[] {
   );
 }
 
+/**
+ * Deterministic symptom → product-class hints for the model-free path.
+ *
+ * This does not invent a product: it only names the same product class a
+ * pharmacist would search for (e.g. "eye drops" for eye pain). It exists
+ * because a bare keyword message ("eyes hurting") used to produce no query at
+ * all, so the catalog was never even asked.
+ */
+const SYMPTOM_QUERY_HINTS: Array<{ pattern: RegExp; queries: string[] }> = [
+  {
+    pattern: /\b(?:eye|eyes|ocular)\b|چشم|بینایی|قرمزی|سوزش|خارش/i,
+    queries: ["eye drops", "artificial tears", "قطره چشم"],
+  },
+  {
+    pattern: /\b(?:cough|sore throat|flu)\b|سرفه|گلودرد|سرماخوردگی/i,
+    queries: ["cough syrup", "شربت سرفه"],
+  },
+  {
+    pattern: /\b(?:headache|migraine)\b|سردرد|میگرن/i,
+    queries: ["headache relief", "مسکن سردرد"],
+  },
+];
+
+function deriveQueriesFromSymptoms(facts: CaseFacts): string[] {
+  const text = [...facts.symptoms, facts.goal ?? "", facts.category ?? ""]
+    .join(" ")
+    .toLowerCase();
+  const out: string[] = [];
+  for (const hint of SYMPTOM_QUERY_HINTS) {
+    if (!hint.pattern.test(text)) continue;
+    out.push(...hint.queries);
+  }
+  return out;
+}
+
 function buildQueries(facts: CaseFacts): string[] {
   // When the model produced product queries they are the *only* thing we search
   // with: they are short product-class / ingredient / category phrases, whereas
@@ -106,7 +141,11 @@ function buildQueries(facts: CaseFacts): string[] {
   const primary =
     facts.productQueries.length > 0
       ? [...facts.productQueries]
-      : [...facts.searchTerms, facts.category ?? ""];
+      : [
+          ...deriveQueriesFromSymptoms(facts),
+          ...facts.searchTerms,
+          facts.category ?? "",
+        ];
   // Last-resort fallback: when neither product queries nor search terms exist,
   // search with the raw symptom wording so a bare symptom still reaches the
   // catalog instead of returning nothing.
@@ -291,9 +330,6 @@ export async function retrieveProducts(params: {
     warnings: string[];
     matchedTokens: string[];
   }> = [];
-  // Allergy-safe catalog candidates, kept so we can still offer suggestions when
-  // nothing passes the relevance gate (see the fallback below).
-  const allergySafe: Array<{ product: ProductDetails; rank: number }> = [];
   const decisions: RelevanceVerdict[] = [];
   let missingIngredientData = false;
 
@@ -315,8 +351,6 @@ export async function retrieveProducts(params: {
       });
       continue;
     }
-
-    allergySafe.push({ product, rank });
 
     // Deterministic relevance gate: a catalog result must be justifiable
     // from the case (e.g. a brightening serum must not appear for red eyes).
@@ -345,34 +379,10 @@ export async function retrieveProducts(params: {
     });
   }
 
-  // Guarantee suggestions: when nothing passed the relevance gate but the
-  // catalog returned allergy-safe candidates, surface the best-ranked ones so
-  // the pharmacist always gets product options. They carry a broad-match
-  // warning and are flagged provisional.
-  if (candidates.length === 0 && allergySafe.length > 0) {
-    const broad = [...allergySafe]
-      .sort((a, b) => b.rank - a.rank)
-      .slice(0, limit);
-    for (const { product, rank } of broad) {
-      const notes = candidateSafetyNotes(
-        product,
-        hasAllergyConstraint,
-        facts.medications.length > 0,
-      );
-      if (notes.missingIngredientData) missingIngredientData = true;
-      candidates.push({
-        product,
-        rank,
-        compatibility: notes.compatibility,
-        warnings: [
-          "Broad catalog match — relevance to this request could not be confirmed from the product data.",
-          ...notes.warnings,
-        ],
-        matchedTokens: [],
-      });
-    }
-  }
-
+  // No fallback. If nothing survives the relevance gate we return an empty
+  // result and the UI shows an honest empty state. Forcing a broad catalog
+  // match here was the root cause of irrelevant recommendations (e.g. a
+  // brightening serum for red eyes).
   const ranked = candidates
     .map((candidate) => ({
       ...candidate,

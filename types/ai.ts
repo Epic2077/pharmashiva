@@ -41,6 +41,23 @@ export type SafetyLevel =
 export type RecommendationPermission = "blocked" | "restricted" | "allowed";
 
 /**
+ * How the frontend should present the product results for this turn.
+ *
+ * This is intentionally separate from the safety level and from the
+ * recommendation permission:
+ *  - show_relevant_products: routine case; cards stand on their own.
+ *  - show_with_safety_context: a safety concern is active; cards remain
+ *    visible but must be read as secondary to the safety guidance and must
+ *    never be framed as treatment for the unresolved symptom.
+ *  - no_relevant_products: nothing passed the relevance/safety gate. Show an
+ *    honest empty state; never fabricate or force a recommendation.
+ */
+export type ProductDisplayPolicy =
+  | "show_relevant_products"
+  | "show_with_safety_context"
+  | "no_relevant_products";
+
+/**
  * The authoritative, deterministic safety assessment. The language model may
  * *explain* this, but it can never override it.
  */
@@ -78,6 +95,24 @@ export interface SafetyAssessment {
   rulesetVersion: string;
   /** Validated concerns raised by the model (escalation-only). */
   modelConcerns: ModelSafetyConcern[];
+  /**
+   * Structured findings from the whole case (present/denied/unknown/
+   * historical). Unknown protocol questions are represented explicitly.
+   */
+  findings: ClinicalFinding[];
+}
+
+/** Status of one structured clinical finding. */
+export type FindingStatus = "present" | "denied" | "historical" | "unknown";
+
+/** A case finding with explicit subject/negation/history semantics. */
+export interface ClinicalFinding {
+  /** Stable concern or protocol-question id. */
+  id: string;
+  label: string;
+  status: FindingStatus;
+  /** Short evidence excerpt, or "" for an unknown protocol question. */
+  evidence: string;
 }
 
 /** Machine-readable product-card gate decision derived from the assessment. */
@@ -98,6 +133,18 @@ export interface ProductGateDecision {
 export interface ModelSafetyConcern {
   severity: "emergency" | "urgent" | "caution";
   reason: string;
+  /** Optional stable id for the model-identified concern. */
+  id?: string;
+  /** Symptom/finding that triggered the concern. */
+  symptom?: string;
+  /** Focused questions needed to resolve this concern. */
+  followUpQuestions?: string[];
+  /** Suggested next step (never replaces deterministic urgent guidance). */
+  recommendedNextStep?: string;
+  requiresProfessionalEvaluation?: boolean;
+  /** Evidence quoted from the customer's own words. */
+  evidence?: string;
+  confidence?: "low" | "medium" | "high";
 }
 
 /* ── Case interpretation ────────────────────────────────────── */
@@ -244,6 +291,8 @@ export type ChatEvent =
       gateReason?: string;
       /** Shopping intent used for retrieval (observability only). */
       intent?: ShoppingIntent;
+      /** How the frontend should present these results. */
+      displayPolicy?: ProductDisplayPolicy;
     }
   | { type: "text"; delta: string }
   | { type: "error"; message: string }
@@ -271,6 +320,12 @@ export interface PipelineDiagnostics {
     permission: RecommendationPermission;
     triggers: string[];
     deterministicOnly: boolean;
+    /** Rule ids plus the AI concerns that escalated the case. */
+    modelConcerns: number;
+    /** Structured finding ids and statuses (no patient content). */
+    findings: Array<{ id: string; status: FindingStatus }>;
+    /** Ids/labels of protocol questions still awaiting an answer. */
+    unansweredQuestions: string[];
   };
   retrieval: {
     databaseAvailable: boolean;
@@ -280,6 +335,8 @@ export interface PipelineDiagnostics {
     kept: number;
     excluded: Array<{ productId: string; code: RelevanceDecisionCode }>;
     missingIngredientData: boolean;
+    /** Why the final product presentation was chosen. */
+    displayPolicy: ProductDisplayPolicy;
   };
   timings: PipelineTimings;
 }

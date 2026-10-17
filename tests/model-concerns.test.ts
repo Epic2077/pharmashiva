@@ -200,7 +200,15 @@ test("model questions never delay urgent or emergency guidance", () => {
   ]);
 
   assert.equal(withQuestions.level, "urgent");
-  assert.equal(withQuestions.followUpQuestions.length, 0);
+  // Model questions are never appended to urgent guidance. The deterministic
+  // rule questions may remain, but the next step is always listed first.
+  assert.ok(
+    !withQuestions.followUpQuestions.includes(
+      "How long has it been like this?",
+    ),
+  );
+  assert.ok(withQuestions.nextSteps.length > 0);
+  assert.equal(withQuestions.recommendedNextStep, withQuestions.nextSteps[0]);
 });
 
 test("invalid model questions are dropped", () => {

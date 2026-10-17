@@ -107,10 +107,7 @@ test("a Persian-named cough product passes for the keyword 'cough'", () => {
   const coughSyrup = makeProduct({
     id: "cough-1",
     name: "شربت ضد سرفه نوسکاف",
-    categories: [
-      makeCategory("مکمل غذایی"),
-      makeCategory("سرماخوردگی و سرفه"),
-    ],
+    categories: [makeCategory("مکمل غذایی"), makeCategory("سرماخوردگی و سرفه")],
     detailLoaded: true,
   });
   const verdict = evaluateCandidateRelevance({
@@ -125,7 +122,10 @@ test("a Persian-named cough product passes for the keyword 'cough'", () => {
 });
 
 test("a Persian-named migraine product passes for the keyword 'headache'", () => {
-  const facts = makeFacts({ symptoms: ["headache"], searchTerms: ["headache"] });
+  const facts = makeFacts({
+    symptoms: ["headache"],
+    searchTerms: ["headache"],
+  });
   const migraineRoll = makeProduct({
     id: "migraine-1",
     name: "رول موضعی سر و گردن کنورت ام",
@@ -190,6 +190,27 @@ test("a beauty product for the same dark-spot request passes", () => {
   });
 
   assert.equal(verdict.pass, true);
+});
+
+test("a product name alone is not evidence of intended use", () => {
+  // No verified category or ingredient data — only the name matches.
+  const nameOnly = makeProduct({
+    id: "name-only-1",
+    name: "Eye Drops",
+    name_en: "Eye Drops",
+    categories: [],
+    ingredients: [],
+    detailLoaded: false,
+  });
+  const verdict = evaluateCandidateRelevance({
+    product: nameOnly,
+    queryTokens: meaningfulQueryTokens(["eye drops"]),
+    domains: symptomDomains(eyeFacts),
+    intent: "medical_symptom",
+  });
+
+  assert.equal(verdict.pass, false);
+  assert.equal(verdict.code, "insufficient_product_data");
 });
 
 test("weak colour tokens never count as overlap", () => {

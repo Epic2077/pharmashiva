@@ -46,7 +46,7 @@ const eyeDropsQueryFacts = makeFacts({
   productQueries: ["eye drops"],
 });
 
-test("irrelevant catalog results are surfaced as broad matches, never silently dropped", async () => {
+test("an irrelevant catalog result is rejected, never forced in to fill a section", async () => {
   let searched = 0;
   const dependencies: RetrievalDependencies = {
     search: async (query, options) => {
@@ -70,15 +70,9 @@ test("irrelevant catalog results are surfaced as broad matches, never silently d
 
   assert.equal(searched, 1);
   assert.equal(result.databaseAvailable, true);
-  // Nothing passed the relevance gate, so the best allergy-safe catalog hit is
-  // offered as a clearly-labelled broad match instead of showing no products.
-  assert.equal(result.products.length, 1);
-  assert.equal(result.products[0].product.id, "age-bright-1");
-  assert.ok(
-    result.products[0].warnings.some((warning) =>
-      warning.includes("Broad catalog match"),
-    ),
-  );
+  // The dark-spot serum is irrelevant to red eyes. It must not be shown as a
+  // "broad match"; an honest empty state is required instead.
+  assert.equal(result.products.length, 0);
   assert.ok(
     result.decisions.some(
       (verdict) =>
@@ -115,6 +109,77 @@ test("relevant candidates pass and keep a traceable reason", async () => {
   assert.equal(result.products[0].product.id, "eye-drops-1");
   assert.equal(result.products[0].categoryName, "Eye care (localized)");
   assert.ok(result.products[0].reason.includes("eye drops"));
+});
+
+test("a bare eye-symptom message still searches for eye products", async () => {
+  const searched: string[] = [];
+  const dependencies: RetrievalDependencies = {
+    search: async (query) => {
+      searched.push(query);
+      return {
+        hits:
+          query === "eye drops"
+            ? [{ product: lubricantEyeDrops(), rank: 1 }]
+            : [],
+      };
+    },
+    enrich: enrichPassthrough(),
+    localizeCategory: localizeIdentity(),
+  };
+
+  const facts = extractHeuristicFacts("my eyes are hurting");
+  const result = await retrieveProducts({
+    facts,
+    message: "my eyes are hurting",
+    language: "en",
+    provisional: false,
+    signal,
+    dependencies,
+  });
+
+  assert.equal(result.noQueryableIntent, false);
+  assert.ok(
+    searched.includes("eye drops"),
+    `expected an eye-drop query, got ${JSON.stringify(searched)}`,
+  );
+  assert.deepEqual(
+    result.products.map((item) => item.product.id),
+    ["eye-drops-1"],
+  );
+});
+
+test("multiple valid candidates are ranked deterministically", async () => {
+  const lowerRanked = makeProduct({
+    id: "eye-drops-2",
+    name: "Eye Drops Plus",
+    name_en: "Eye Drops Plus",
+    categories: [makeCategory("Eye care"), makeCategory("Eye drops")],
+    ingredients: [makeIngredient("Carbomer")],
+    detailLoaded: true,
+  });
+  const dependencies: RetrievalDependencies = {
+    search: searchReturning([
+      { product: lubricantEyeDrops(), rank: 0.9 },
+      { product: lowerRanked, rank: 0.5 },
+    ]),
+    enrich: enrichPassthrough(),
+    localizeCategory: localizeIdentity(),
+  };
+
+  const result = await retrieveProducts({
+    facts: eyeDropsQueryFacts,
+    message: "Ali's eyes are red.",
+    language: "en",
+    provisional: false,
+    signal,
+    dependencies,
+  });
+
+  assert.deepEqual(
+    result.products.map((item) => item.product.id),
+    ["eye-drops-1", "eye-drops-2"],
+  );
+  assert.ok(result.products[0].score > result.products[1].score);
 });
 
 test("known allergen ingredient is a hard exclusion (allergy_conflict)", async () => {

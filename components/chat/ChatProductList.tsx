@@ -3,7 +3,11 @@
 import { Info, PackageSearch, ShieldOff, TriangleAlert } from "lucide-react";
 import ProductCardList from "@/components/products/ProductCardList";
 import type { LanguageCode } from "@/lib/i18n";
-import type { ProductRecommendation } from "@/types/ai";
+import type {
+  ProductDisplayPolicy,
+  ProductRecommendation,
+  SafetyLevel,
+} from "@/types/ai";
 
 interface ChatProductListProps {
   products: ProductRecommendation[];
@@ -14,6 +18,10 @@ interface ChatProductListProps {
   suppressed?: boolean;
   /** Machine-readable or human reason for the suppression. */
   gateReason?: string;
+  /** Backend decision on how to present the results. */
+  displayPolicy?: ProductDisplayPolicy;
+  /** Safety level, used to strengthen the warning for urgent cases. */
+  safetyLevel?: SafetyLevel;
 }
 
 /** Localized display name for the "why" list (mirrors ProductCard logic). */
@@ -36,6 +44,8 @@ export function ChatProductList({
   databaseAvailable,
   suppressed = false,
   gateReason,
+  displayPolicy,
+  safetyLevel,
 }: ChatProductListProps) {
   if (suppressed) {
     return (
@@ -89,16 +99,26 @@ export function ChatProductList({
     categoryName: item.categoryName,
   }));
 
+  // The backend policy wins; the legacy `provisional` flag is only a fallback
+  // for persisted messages written before the policy existed.
+  const withSafetyContext =
+    displayPolicy === "show_with_safety_context" || provisional;
+  const urgent = safetyLevel === "emergency" || safetyLevel === "urgent";
+
   return (
     <section className="my-3">
       <div className="mb-2 flex items-center gap-2 px-1 text-sm font-semibold text-primary">
         <PackageSearch size={16} aria-hidden="true" />
         <span>
-          {provisional ? "Provisional products" : "Product suggestions"}
+          {urgent
+            ? "Products (not a treatment for the concern above)"
+            : withSafetyContext
+              ? "Products (review safety first)"
+              : "Product suggestions"}
         </span>
       </div>
 
-      {provisional ? (
+      {withSafetyContext ? (
         <p className="mb-2 flex items-start gap-2 rounded-xl border border-warning/30 bg-warning-background px-3 py-2 text-xs text-foreground/90">
           <TriangleAlert
             size={14}
@@ -106,7 +126,9 @@ export function ChatProductList({
             aria-hidden="true"
           />
           <span>
-            Suggestions only — review the safety check above before dispensing.
+            {urgent
+              ? "These products are not a treatment for the concern above and must not delay the recommended care."
+              : "Suggestions only — review the safety check above before dispensing. They are not a substitute for the assessment the safety alert calls for."}
           </span>
         </p>
       ) : null}

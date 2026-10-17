@@ -9,7 +9,7 @@
     "lint": "eslint",
     "db:init": "node scripts/db-init.mjs",
     "darukade:sync": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/darukade-sync.ts",
-    "test": "node --test --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./tests/loader/register.mjs tests/safety-assessment.test.ts tests/safety-events.test.ts tests/model-concerns.test.ts tests/relevance-gate.test.ts tests/product-gating.test.ts tests/retrieval.integration.test.ts tests/interpret-validation.test.ts",
+    "test": "node --test --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./tests/loader/register.mjs tests/safety-assessment.test.ts tests/safety-case-awareness.test.ts tests/safety-events.test.ts tests/model-concerns.test.ts tests/relevance-gate.test.ts tests/product-gating.test.ts tests/retrieval.integration.test.ts tests/interpret-validation.test.ts",
     "check:imports": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-import-case.ts"
   },
   "dependencies": {

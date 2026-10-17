@@ -48,9 +48,11 @@ test('"My eye hurts and my vision is blurry." is urgent — blocked, professiona
   assert.equal(assessment.recommendationPermission, "blocked");
   assert.ok(assessment.detectedRedFlags.includes("eye-vision-threat"));
   assert.equal(assessment.requiresProfessionalEvaluation, true);
-  // Urgency must not be delayed by questions.
-  assert.equal(assessment.followUpQuestions.length, 0);
+  // The actionable next step must be present and listed before any question.
   assert.ok(assessment.nextSteps.length > 0);
+  assert.equal(assessment.recommendedNextStep, assessment.nextSteps[0]);
+  // Targeted questions may follow, but they must never replace the guidance.
+  assert.ok(assessment.followUpQuestions.length > 0);
 });
 
 test('"A chemical splashed into my eye." is emergency — rinse and emergency care first', () => {
@@ -241,13 +243,22 @@ test("a bare symptom keyword is actionable immediately, without a questions prom
   assert.equal(assessment.followUpQuestions.length, 0);
 });
 
-test("short keyword symptoms stay routine so results are not delayed", () => {
-  for (const message of ["eye pain", "cough", "headache", "nausea"]) {
+test("simple keyword symptoms stay routine so results are not delayed", () => {
+  for (const message of ["cough", "headache", "nausea"]) {
     const assessment = assess(message);
     assert.equal(assessment.level, "routine", message);
     assert.equal(assessment.recommendationPermission, "allowed", message);
     assert.equal(assessment.followUpQuestions.length, 0, message);
   }
+});
+
+test("eye pain is a targeted caution with the eye protocol questions", () => {
+  const assessment = assess("eye pain");
+
+  assert.equal(assessment.level, "caution");
+  assert.equal(assessment.recommendationPermission, "allowed");
+  assert.ok(assessment.triggers.includes("eye-pain-unresolved"));
+  assert.ok(assessment.followUpQuestions.length > 0);
 });
 
 test("rule-driven cautions still ask their focused questions", () => {

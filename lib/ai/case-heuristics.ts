@@ -11,6 +11,11 @@
  */
 
 import type { CaseFacts } from "@/types/ai";
+import {
+  hasUnnegatedTerm,
+  isResolvedMention,
+  normaliseHealthText,
+} from "../safety/text.ts";
 
 const SYMPTOM_TERMS: string[] = [
   "headache",
@@ -49,11 +54,28 @@ const SYMPTOM_TERMS: string[] = [
   "eye redness",
   "eye pain",
   "eye hurts",
+  "eye hurting",
+  "eye ache",
+  "eye aches",
+  "eyes hurt",
+  "eyes hurting",
+  "eyes are hurting",
+  "painful eye",
+  "painful eyes",
+  "sore eye",
+  "sore eyes",
+  "eye discomfort",
+  "eye irritation",
   "blurred vision",
   "blurry vision",
   "سردرد",
   "قرمزی چشم",
   "درد چشم",
+  "چشم درد",
+  "چشمم درد",
+  "چشمام درد",
+  "چشم هام درد",
+  "سوزش چشم",
   "تاری دید",
   "معده",
   "درد",
@@ -185,7 +207,7 @@ function reduceAllergenPhrase(
 }
 
 function extractAllergies(text: string): string[] {
-  const source = text.toLowerCase();
+  const source = normaliseHealthText(text);
   const found: string[] = [];
 
   const negatedAround = (index: number, length: number): boolean => {
@@ -252,9 +274,19 @@ function unique(values: string[]): string[] {
   return out;
 }
 
-function extractSymptoms(text: string): string[] {
-  const lower = text.toLowerCase();
-  return unique(SYMPTOM_TERMS.filter((term) => lower.includes(term)));
+/**
+ * Negation- and history-aware symptom extraction. "no red eyes" and
+ * "chest pain last week, resolved" must not become active symptoms: doing so
+ * would re-inject a denied finding into every later turn through memory.
+ */
+export function extractSymptoms(text: string): string[] {
+  return unique(
+    SYMPTOM_TERMS.filter((term) => {
+      if (!hasUnnegatedTerm(text, term)) return false;
+      if (isResolvedMention(text, term)) return false;
+      return true;
+    }),
+  );
 }
 
 function extractAge(text: string): number | null {

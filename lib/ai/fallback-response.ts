@@ -45,7 +45,11 @@ export function buildFallbackResponse(params: {
         products.length === 1 ? "product" : "products"
       } in the current catalog, shown below.`,
     );
-    if (safety.level !== "routine") {
+    if (safety.level === "emergency" || safety.level === "urgent") {
+      lines.push(
+        "These products are not a treatment for the concern above and must not delay the recommended care.",
+      );
+    } else if (safety.level !== "routine") {
       lines.push(
         "These suggestions are provisional — review the safety check above before dispensing.",
       );

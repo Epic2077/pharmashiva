@@ -17,6 +17,7 @@ import { isDeepSeekConfigured } from "./config";
 import { jsonChatCompletion, type DeepSeekMessage } from "./deepseek.service";
 import { getCategoryTree, categoryVocabulary } from "@/lib/darukade/categories";
 import { buildInterpretUserPrompt, INTERPRET_SYSTEM_PROMPT } from "./prompts";
+import { isResolvedMention, termIsDenied } from "../safety/text.ts";
 
 function asString(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -118,7 +119,32 @@ export function parseSafetyConcerns(raw: unknown): ModelSafetyConcern[] {
     ) {
       continue;
     }
-    out.push({ severity, reason: reason.slice(0, 200) });
+    const confidence =
+      entry.confidence === "low" ||
+      entry.confidence === "medium" ||
+      entry.confidence === "high"
+        ? entry.confidence
+        : undefined;
+    const concern: ModelSafetyConcern = {
+      severity,
+      reason: reason.slice(0, 200),
+    };
+    const id = asString(entry.id);
+    const symptom = asString(entry.symptom);
+    const nextStep = asString(entry.recommendedNextStep);
+    const evidence = asString(entry.evidence);
+    const questions = asStringArray(entry.followUpQuestions, 3);
+    if (id) concern.id = id.slice(0, 80);
+    if (symptom) concern.symptom = symptom.slice(0, 120);
+    if (nextStep) concern.recommendedNextStep = nextStep.slice(0, 200);
+    if (evidence) concern.evidence = evidence.slice(0, 200);
+    if (questions.length) concern.followUpQuestions = questions;
+    if (typeof entry.requiresProfessionalEvaluation === "boolean") {
+      concern.requiresProfessionalEvaluation =
+        entry.requiresProfessionalEvaluation;
+    }
+    if (confidence) concern.confidence = confidence;
+    out.push(concern);
     if (out.length >= 4) break;
   }
   return out;
@@ -134,6 +160,23 @@ export function parseFollowUpQuestions(raw: unknown): string[] {
   const record = raw as Record<string, unknown>;
   if (!Array.isArray(record.followUpQuestions)) return [];
   return asStringArray(record.followUpQuestions, 5);
+}
+
+/**
+ * Drop model-reported symptoms that the current message explicitly denies or
+ * reports as resolved. The model is untrusted: "no chest pain" must never
+ * become a symptom just because the word "chest pain" appeared.
+ */
+export function sanitizeSymptoms(
+  symptoms: readonly string[],
+  message: string,
+): string[] {
+  return symptoms.filter((symptom) => {
+    if (!symptom.trim()) return false;
+    if (termIsDenied(message, symptom)) return false;
+    if (isResolvedMention(message, symptom)) return false;
+    return true;
+  });
 }
 
 /** Merge heuristic facts (instant) with model facts (richer). */
@@ -208,7 +251,11 @@ export async function interpretCase(params: {
       signal: params.signal,
     });
 
-    const facts = parseCaseFacts(raw, heuristic);
+    const parsed = parseCaseFacts(raw, heuristic);
+    const facts: CaseFacts = {
+      ...parsed,
+      symptoms: sanitizeSymptoms(parsed.symptoms, params.message),
+    };
     return {
       facts,
       reasoning: [],

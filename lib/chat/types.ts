@@ -1,6 +1,7 @@
 import type {
   CaseMemory,
   ChatStage,
+  ProductDisplayPolicy,
   ProductRecommendation,
   SafetyAssessment,
 } from "@/types/ai";
@@ -39,6 +40,8 @@ export interface Message {
   productsSuppressed?: boolean;
   /** Machine-readable reason code when cards are withheld. */
   productsGateReason?: string;
+  /** How the backend decided these results should be presented. */
+  productsDisplayPolicy?: ProductDisplayPolicy;
   /** Fatal error for this turn. */
   error?: string | null;
   /** Set once the message has been written to Supabase. */

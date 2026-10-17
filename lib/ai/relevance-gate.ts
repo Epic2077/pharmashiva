@@ -472,8 +472,29 @@ export function meaningfulQueryTokens(queries: string[]): string[] {
   return out;
 }
 
+/**
+ * Verified product facts: catalog category/breadcrumb data and structured
+ * ingredients. These are the only source we treat as evidence of intended use.
+ * Product names and keyword similarity are never sufficient on their own.
+ */
+function verifiedProductTokens(product: ProductDetails): string[] {
+  return tokeniseParts([
+    ...product.categories.map((category) => category.name),
+    ...product.categories.flatMap((category) => category.breadcrumbs ?? []),
+    ...product.ingredients.flatMap((ingredient) =>
+      [
+        ingredient.name,
+        ingredient.name_en,
+        ingredient.name_fa,
+        ingredient.raw_name,
+      ].filter((value): value is string => Boolean(value)),
+    ),
+  ]);
+}
+
+/** All searchable tokens, including name/brand — used only for scope hints. */
 function productTokens(product: ProductDetails): string[] {
-  const parts: string[] = [
+  return tokeniseParts([
     product.name,
     product.name_en ?? "",
     product.name_fa ?? "",
@@ -491,7 +512,10 @@ function productTokens(product: ProductDetails): string[] {
         ingredient.raw_name,
       ].filter((value): value is string => Boolean(value)),
     ),
-  ];
+  ]);
+}
+
+function tokeniseParts(parts: string[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const part of parts) {
@@ -536,10 +560,14 @@ export function evaluateCandidateRelevance(
   input: RelevanceInput,
 ): RelevanceVerdict {
   const { product, queryTokens, domains, intent } = input;
-  const tokens = productTokens(product);
+  // Relevance must be justified by verified category/ingredient data. Product
+  // names and keyword similarity alone are never evidence of intended use.
+  const verifiedTokens = verifiedProductTokens(product);
 
   const matchedTokens = queryTokens.filter((queryToken) =>
-    tokens.some((productToken) => tokenOverlap(queryToken, productToken)),
+    verifiedTokens.some((productToken) =>
+      tokenOverlap(queryToken, productToken),
+    ),
   );
   const hasOverlap = matchedTokens.length > 0;
 
@@ -549,7 +577,7 @@ export function evaluateCandidateRelevance(
     intent === "medical_symptom" &&
     domains.length > 0 &&
     domains.some((domain) =>
-      DOMAINS[domain].some((term) => tokens.includes(term)),
+      DOMAINS[domain].some((term) => verifiedTokens.includes(term)),
     );
 
   const hasKnownIntendedUse =

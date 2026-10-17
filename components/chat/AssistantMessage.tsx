@@ -40,11 +40,24 @@ export function AssistantMessage({
       stage === "assessing" ||
       stage === "retrieving");
 
-  // Product cards are never suppressed by the safety assessment: the alert is
-  // advisory and appears above the suggestions. Only an explicit backend
-  // `suppressed` flag (no longer emitted) could hide them.
+  // Product cards are never suppressed merely because a red flag fired. The
+  // backend's display policy tells us how to frame them instead. Only an
+  // explicit backend `suppressed` flag hides them.
   const productsSuppressed = Boolean(message.productsSuppressed);
   const gateReason = message.productsGateReason;
+
+  // Persisted messages written before the display policy existed fall back to
+  // the safety level rather than silently dropping the safety context.
+  const productsDisplayPolicy =
+    message.productsDisplayPolicy ??
+    ((message.products?.length ?? 0) === 0
+      ? "no_relevant_products"
+      : (message.safety?.level ?? "routine") === "routine"
+        ? "show_relevant_products"
+        : "show_with_safety_context");
+  const productsProvisional =
+    message.productsProvisional ??
+    (message.safety ? message.safety.level !== "routine" : false);
 
   return (
     <motion.div
@@ -85,10 +98,12 @@ export function AssistantMessage({
           <ChatProductList
             products={message.products}
             language={language}
-            provisional={Boolean(message.productsProvisional)}
+            provisional={productsProvisional}
             databaseAvailable={message.productsDatabaseAvailable ?? true}
             suppressed={productsSuppressed}
             gateReason={gateReason}
+            displayPolicy={productsDisplayPolicy}
+            safetyLevel={message.safety?.level}
           />
         ) : null}
 

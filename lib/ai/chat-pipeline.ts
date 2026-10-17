@@ -314,6 +314,7 @@ export async function runChatPipeline({
     suppressed: emission.suppressed,
     gateReason: emission.gateReason ?? undefined,
     intent: emission.intent,
+    displayPolicy: emission.displayPolicy,
   });
   mark("database");
 
@@ -343,6 +344,7 @@ export async function runChatPipeline({
           facts: caseFacts,
           safety,
           products,
+          displayPolicy: emission.displayPolicy,
         }),
       },
     ];
@@ -399,6 +401,14 @@ export async function runChatPipeline({
         permission: safety.recommendationPermission,
         triggers: safety.triggers,
         deterministicOnly: Boolean(safety.deterministicOnly),
+        modelConcerns: safety.modelConcerns.length,
+        findings: safety.findings.map((finding) => ({
+          id: finding.id,
+          status: finding.status,
+        })),
+        unansweredQuestions: safety.findings
+          .filter((finding) => finding.status === "unknown")
+          .map((finding) => finding.id),
       },
       retrieval: {
         databaseAvailable,
@@ -408,6 +418,7 @@ export async function runChatPipeline({
         kept: products.length,
         excluded,
         missingIngredientData,
+        displayPolicy: emission.displayPolicy,
       },
       timings: reportTimings,
     },
