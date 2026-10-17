@@ -1,10 +1,11 @@
 /**
- * Pure product-card gating for the pipeline.
+ * Product-card emission for the pipeline.
  *
- * Turns the deterministic safety assessment into the exact `products` stream
- * event. This is the single place the backend decides whether product cards
- * may reach the client, so tests can pin the final API behaviour without
- * running the AI or the catalog.
+ * Product suggestions are always shown: the safety assessment is advisory and
+ * never removes cards. Red flags still surface as their own alert above the
+ * products, and the hard allergy exclusion in retrieval is unaffected. This
+ * module just packages the retrieved products into the `products` stream
+ * event, so tests can pin the final API shape without running the AI.
  */
 
 import type {
@@ -12,7 +13,6 @@ import type {
   SafetyAssessment,
   ShoppingIntent,
 } from "@/types/ai";
-import { productGateDecision } from "../safety/red-flags.ts";
 
 export interface ProductEmission {
   products: ProductRecommendation[];
@@ -33,27 +33,11 @@ export interface EmissionInput {
 }
 
 /**
- * Plan the `products` event payload. Only an emergency/urgent (blocked)
- * assessment suppresses the cards; a caution-level case shows its suggestions
- * flagged `provisional`, and every other level passes the retrieved products
- * through so the pharmacist always gets results fast.
+ * Plan the `products` event payload. Products always pass through; a case that
+ * is not `routine` marks them `provisional` so the UI can nudge the pharmacist
+ * to read the safety alert, but the cards themselves are never withheld.
  */
 export function planProductEmission(input: EmissionInput): ProductEmission {
-  const gate = productGateDecision(input.safety);
-
-  if (!gate.allowed) {
-    return {
-      products: [],
-      provisional: true,
-      // The catalog was not consulted; do not misreport it as unavailable.
-      databaseAvailable: true,
-      queries: [],
-      suppressed: true,
-      gateReason: gate.reasonCode,
-      intent: input.intent,
-    };
-  }
-
   return {
     products: input.products,
     provisional: input.safety.level !== "routine",

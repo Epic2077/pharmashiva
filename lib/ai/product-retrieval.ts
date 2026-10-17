@@ -103,10 +103,16 @@ function buildQueries(facts: CaseFacts): string[] {
   // `searchTerms` is the customer's own symptom phrasing. The raw user message
   // is NEVER used as a query: sentence queries matched catalog noise (e.g.
   // promoted beauty products for "Ali's eyes are red").
-  const raw =
+  const primary =
     facts.productQueries.length > 0
       ? [...facts.productQueries]
       : [...facts.searchTerms, facts.category ?? ""];
+  // Last-resort fallback: when neither product queries nor search terms exist,
+  // search with the raw symptom wording so a bare symptom still reaches the
+  // catalog instead of returning nothing.
+  const raw = primary.some((value) => value.trim().length >= 2)
+    ? primary
+    : facts.symptoms;
   const seen = new Set<string>();
   const queries: string[] = [];
   for (const value of raw) {
@@ -127,6 +133,40 @@ function buildQueries(facts: CaseFacts): string[] {
     if (queries.length >= MAX_QUERIES) break;
   }
   return queries;
+}
+
+/** Allergy/medication notes attached to a shown candidate. */
+function candidateSafetyNotes(
+  product: ProductDetails,
+  hasAllergyConstraint: boolean,
+  hasMedications: boolean,
+): {
+  compatibility: ProductCompatibility;
+  warnings: string[];
+  missingIngredientData: boolean;
+} {
+  const warnings: string[] = [];
+  let compatibility: ProductCompatibility = "compatible";
+  let missingIngredientData = false;
+
+  if (hasAllergyConstraint && product.ingredients.length === 0) {
+    // Incomplete ingredient data means we cannot claim allergy safety.
+    compatibility = "unknown";
+    missingIngredientData = true;
+    warnings.push(
+      "Ingredient list is incomplete, so allergy compatibility cannot be confirmed.",
+    );
+  }
+
+  if (hasMedications) {
+    // Interaction checking requires clinical reference data the catalog does
+    // not carry — say so instead of implying compatibility.
+    warnings.push(
+      "Interactions with the customer's current medicines have not been verified for this product — check a reliable reference before recommending.",
+    );
+  }
+
+  return { compatibility, warnings, missingIngredientData };
 }
 
 function buildReason(product: ProductDetails, facts: CaseFacts): string {
@@ -251,6 +291,9 @@ export async function retrieveProducts(params: {
     warnings: string[];
     matchedTokens: string[];
   }> = [];
+  // Allergy-safe catalog candidates, kept so we can still offer suggestions when
+  // nothing passes the relevance gate (see the fallback below).
+  const allergySafe: Array<{ product: ProductDetails; rank: number }> = [];
   const decisions: RelevanceVerdict[] = [];
   let missingIngredientData = false;
 
@@ -273,6 +316,8 @@ export async function retrieveProducts(params: {
       continue;
     }
 
+    allergySafe.push({ product, rank });
+
     // Deterministic relevance gate: a catalog result must be justifiable
     // from the case (e.g. a brightening serum must not appear for red eyes).
     const verdict = evaluateCandidateRelevance({
@@ -284,33 +329,48 @@ export async function retrieveProducts(params: {
     decisions.push(verdict);
     if (!verdict.pass) continue;
 
-    const warnings: string[] = [];
-    let compatibility: ProductCompatibility = "compatible";
-
-    if (hasAllergyConstraint && product.ingredients.length === 0) {
-      // Incomplete ingredient data means we cannot claim allergy safety.
-      compatibility = "unknown";
-      missingIngredientData = true;
-      warnings.push(
-        "Ingredient list is incomplete, so allergy compatibility cannot be confirmed.",
-      );
-    }
-
-    if (facts.medications.length > 0) {
-      // Interaction checking requires clinical reference data the catalog
-      // does not carry — say so instead of implying compatibility.
-      warnings.push(
-        "Interactions with the customer's current medicines have not been verified for this product — check a reliable reference before recommending.",
-      );
-    }
+    const notes = candidateSafetyNotes(
+      product,
+      hasAllergyConstraint,
+      facts.medications.length > 0,
+    );
+    if (notes.missingIngredientData) missingIngredientData = true;
 
     candidates.push({
       product,
       rank,
-      compatibility,
-      warnings,
+      compatibility: notes.compatibility,
+      warnings: notes.warnings,
       matchedTokens: verdict.matchedTokens,
     });
+  }
+
+  // Guarantee suggestions: when nothing passed the relevance gate but the
+  // catalog returned allergy-safe candidates, surface the best-ranked ones so
+  // the pharmacist always gets product options. They carry a broad-match
+  // warning and are flagged provisional.
+  if (candidates.length === 0 && allergySafe.length > 0) {
+    const broad = [...allergySafe]
+      .sort((a, b) => b.rank - a.rank)
+      .slice(0, limit);
+    for (const { product, rank } of broad) {
+      const notes = candidateSafetyNotes(
+        product,
+        hasAllergyConstraint,
+        facts.medications.length > 0,
+      );
+      if (notes.missingIngredientData) missingIngredientData = true;
+      candidates.push({
+        product,
+        rank,
+        compatibility: notes.compatibility,
+        warnings: [
+          "Broad catalog match — relevance to this request could not be confirmed from the product data.",
+          ...notes.warnings,
+        ],
+        matchedTokens: [],
+      });
+    }
   }
 
   const ranked = candidates

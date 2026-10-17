@@ -15,7 +15,6 @@ import {
   applyModelFollowUpQuestions,
   assessSafety,
   isAllergyOnlyConcern,
-  productGateDecision,
 } from "@/lib/safety/red-flags";
 import type {
   ChatEvent,
@@ -175,23 +174,20 @@ export async function runChatPipeline({
   }
   mark("safetyInstant");
 
-  // ── Step 2: interpretation, and provisional retrieval only when the
-  // instant gate allows it — an already-blocked case gains nothing from
-  // catalog work ──
+  // ── Step 2: interpretation and provisional retrieval run together.
+  // Retrieval always runs, even for a possible red flag: product suggestions
+  // are never withheld, and the safety alert is emitted separately below. ──
   stage("interpreting");
-  const instantGate = productGateDecision(instantSafety);
   const [interpretation, earlyRetrieval] = await Promise.all([
     interpretCase({ message, history, signal, memory: memoryState }),
-    instantGate.allowed
-      ? retrieveProducts({
-          facts: instantFacts,
-          message,
-          language,
-          provisional: true,
-          signal,
-          dependencies: { localizeCategory: localizeCategorySafe },
-        })
-      : Promise.resolve(null),
+    retrieveProducts({
+      facts: instantFacts,
+      message,
+      language,
+      provisional: true,
+      signal,
+      dependencies: { localizeCategory: localizeCategorySafe },
+    }),
   ]);
   mark("interpreted");
 
@@ -242,9 +238,8 @@ export async function runChatPipeline({
   await onMemory?.(updatedMemory);
   mark("memory");
 
-  // ── Step 4: retrieval — hard-gated by the safety assessment ───
+  // ── Step 4: retrieval — product cards are never safety-gated ──
   stage("retrieving");
-  const gate = productGateDecision(safety);
   let products: ProductRecommendation[] = earlyRetrieval?.products ?? [];
   let databaseAvailable = earlyRetrieval?.databaseAvailable ?? true;
   let retrievalQueries = earlyRetrieval?.queries ?? [];
@@ -266,41 +261,36 @@ export async function runChatPipeline({
   };
   if (earlyRetrieval) recordDecisions(earlyRetrieval);
 
-  if (!gate.allowed) {
-    // Blocked (emergency/urgent) or restricted (failed assessment): no product
-    // card may reach the client, no matter what retrieval returned.
-    products = [];
-  } else {
-    // The model's product queries drive a refined AI search. Without them we
-    // keep the (already relevance-gated) early results.
-    const hasAiQueries = caseFacts.productQueries.length > 0;
+  // The model's product queries drive a refined AI search. Without them we
+  // keep the (already relevance-gated) early results.
+  const hasAiQueries = caseFacts.productQueries.length > 0;
 
-    if (hasAiQueries || products.length < 3) {
-      const refined = await retrieveProducts({
-        facts: caseFacts,
-        message,
-        language,
-        provisional: false,
-        signal,
-        dependencies: { localizeCategory: localizeCategorySafe },
-      });
-      recordDecisions(refined);
-      // If AI suggestions found products, use them as the primary result.
-      if (hasAiQueries && refined.products.length > 0) {
-        products = refined.products;
-        databaseAvailable = refined.databaseAvailable;
-      } else {
-        products = mergeProducts(refined.products, products, 6);
-        databaseAvailable = databaseAvailable && refined.databaseAvailable;
-      }
+  if (hasAiQueries || products.length < 3) {
+    const refined = await retrieveProducts({
+      facts: caseFacts,
+      message,
+      language,
+      provisional: false,
+      signal,
+      dependencies: { localizeCategory: localizeCategorySafe },
+    });
+    recordDecisions(refined);
+    // If AI suggestions found products, use them as the primary result.
+    if (hasAiQueries && refined.products.length > 0) {
+      products = refined.products;
+      databaseAvailable = refined.databaseAvailable;
+    } else {
+      products = mergeProducts(refined.products, products, 6);
+      databaseAvailable = databaseAvailable && refined.databaseAvailable;
     }
-
-    // Caution cases show suggestions flagged provisional; routine is final.
-    products = products.map((item) => ({
-      ...item,
-      provisional: safety.level !== "routine",
-    }));
   }
+
+  // Anything below `routine` is flagged provisional so the UI nudges the
+  // pharmacist to read the safety alert — the cards still show.
+  products = products.map((item) => ({
+    ...item,
+    provisional: safety.level !== "routine",
+  }));
 
   const productQueriesUsed =
     caseFacts.productQueries.length > 0
@@ -335,7 +325,6 @@ export async function runChatPipeline({
       facts: caseFacts,
       safety,
       products,
-      productGate: gate,
     });
     if (extraNote) text += `\n\n${extraNote}`;
     await streamText(text, send);
@@ -354,7 +343,6 @@ export async function runChatPipeline({
           facts: caseFacts,
           safety,
           products,
-          productGate: gate,
         }),
       },
     ];

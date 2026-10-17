@@ -6,7 +6,6 @@
 
 import type {
   CaseFacts,
-  ProductGateDecision,
   ProductRecommendation,
   SafetyAssessment,
 } from "@/types/ai";
@@ -15,9 +14,8 @@ export function buildFallbackResponse(params: {
   facts: CaseFacts;
   safety: SafetyAssessment;
   products: ProductRecommendation[];
-  productGate?: ProductGateDecision;
 }): string {
-  const { safety, products, productGate } = params;
+  const { safety, products } = params;
   const lines: string[] = [];
 
   if (safety.status === "HIGH_RISK") {
@@ -28,8 +26,6 @@ export function buildFallbackResponse(params: {
       lines.push("**Next steps**");
       for (const step of safety.nextSteps) lines.push(`- ${step}`);
     }
-    lines.push("");
-    lines.push("Product suggestions are withheld for this case.");
   } else if (safety.status === "UNRESOLVED") {
     lines.push(
       "I need a little more information before finalising a suggestion.",
@@ -38,29 +34,20 @@ export function buildFallbackResponse(params: {
       lines.push("");
       for (const question of safety.questions) lines.push(`- ${question}`);
     }
-    if (productGate && !productGate.allowed) {
-      lines.push("");
-      lines.push(
-        "Product suggestions are withheld until this concern is resolved.",
-      );
-    }
   } else {
     lines.push("Here is what I can share based on the details provided.");
   }
 
-  if (productGate && !productGate.allowed) {
-    lines.push("");
-    lines.push(productGate.reason);
-  } else if (products.length > 0) {
+  if (products.length > 0) {
     lines.push("");
     lines.push(
       `I found ${products.length} matching ${
         products.length === 1 ? "product" : "products"
       } in the current catalog, shown below.`,
     );
-    if (safety.level === "caution") {
+    if (safety.level !== "routine") {
       lines.push(
-        "These suggestions are provisional until the questions above are answered.",
+        "These suggestions are provisional — review the safety check above before dispensing.",
       );
     }
   } else {

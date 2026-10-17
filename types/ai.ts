@@ -31,14 +31,12 @@ export type SafetyLevel =
   | "insufficient_information";
 
 /**
- * Whether product cards may be returned for the current case. This is a hard
- * backend gate — the language model can never widen it.
- *  - blocked: no routine product recommendations (emergency/urgent only).
- *  - allowed: product cards may be shown — routine cases normally, caution
- *    cases as provisional suggestions, and short/vague requests surface
- *    whatever the catalog can offer.
- *  - restricted: recommendations withheld because the safety assessment could
- *    not be completed (engine-failure fallback only).
+ * Advisory safety stance for the current case. It is informational: product
+ * cards are always shown and are never withheld by it.
+ *  - blocked: emergency/urgent — urgent professional attention is advised.
+ *  - allowed: no blocking concern identified.
+ *  - restricted: the safety assessment could not be completed (engine-failure
+ *    fallback only).
  */
 export type RecommendationPermission = "blocked" | "restricted" | "allowed";
 

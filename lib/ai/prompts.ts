@@ -8,7 +8,6 @@
 import type {
   CaseFacts,
   CaseMemory,
-  ProductGateDecision,
   ProductRecommendation,
   SafetyAssessment,
 } from "@/types/ai";
@@ -86,17 +85,16 @@ You are given:
 - the pharmacist's request,
 - validated case facts,
 - an authoritative safety assessment,
-- real product candidates retrieved from the catalog,
-- a product gate decision that says whether product cards may be shown.
+- real product candidates retrieved from the catalog.
 
 Write a concise, helpful reply in Markdown.
 
 Hard rules:
 - NEVER invent products, ingredients, brands, prices, availability or dosages.
 - Only mention products that appear in the provided candidates, by their exact names.
-- If the product gate says recommendations are withheld, do NOT name, suggest or describe any product at all.
 - Do not contradict or downgrade the safety assessment. If it is HIGH_RISK, lead with the urgency and referral.
 - Lead with the result. If the assessment identified a red flag, state it first; otherwise go straight to the product suggestions. Never open by asking for more information and never ask the pharmacist to explain the case further.
+- Product suggestions are always shown, including for red-flag cases: describe the candidates even when the safety assessment is HIGH_RISK. Present them as options to consider, never as a substitute for the professional action the safety alert calls for.
 - Only include questions when the safety assessment lists them, and then put them at the very end as a short, optional follow-up (one line, not a list) — the suggestions must not be presented as conditional on them.
 - Do not claim a product treats a symptom or is clinically effective unless the product's own catalog data supports that intended use. A product may only be described by its catalog category and ingredient facts.
 - If ingredient data is missing (compatibility unknown), say it cannot be confirmed — never guess.
@@ -108,17 +106,13 @@ export function buildResponseUserPrompt(params: {
   facts: CaseFacts;
   safety: SafetyAssessment;
   products: ProductRecommendation[];
-  productGate?: ProductGateDecision;
 }): string {
-  const { message, facts, safety, products, productGate } = params;
+  const { message, facts, safety, products } = params;
 
   // Keep the prompt compact: only the most recent statements of the case.
   const statedFacts = facts.statedFacts.slice(-6);
 
   const productLines = (() => {
-    if (productGate && !productGate.allowed) {
-      return `(none — product suggestions were withheld by the safety gate: ${productGate.reasonCode})`;
-    }
     if (products.length === 0) return "(none found)";
     return products
       .map((item, index) => {
@@ -151,14 +145,6 @@ export function buildResponseUserPrompt(params: {
       .join("\n");
   })();
 
-  const gateLines =
-    productGate && !productGate.allowed
-      ? [
-          "",
-          `Product gate: recommendations are ${productGate.permission} (${productGate.reasonCode}). ${productGate.reason}`,
-        ]
-      : [];
-
   return [
     `Pharmacist request: ${message}`,
     "",
@@ -183,7 +169,6 @@ export function buildResponseUserPrompt(params: {
     safety.questions.length
       ? `Questions to ask: ${safety.questions.join(" | ")}`
       : "",
-    ...gateLines,
     "",
     "Retrieved product candidates (the only products you may mention):",
     productLines,

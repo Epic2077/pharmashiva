@@ -68,19 +68,6 @@ export function SafetyAlert({ safety }: SafetyAlertProps) {
         <p className="font-medium text-foreground">{safety.title}</p>
         <p className="text-foreground/90">{safety.explanation}</p>
 
-        {safety.recommendationPermission !== "allowed" ? (
-          <p className="flex items-start gap-1.5 rounded-xl border border-warning/30 bg-warning-background px-3 py-2 text-xs font-medium text-foreground/90">
-            <Info
-              size={13}
-              className="mt-0.5 shrink-0 text-warning"
-              aria-hidden="true"
-            />
-            <span>
-              Product suggestions are withheld while this concern is open.
-            </span>
-          </p>
-        ) : null}
-
         {safety.nextSteps.length > 0 ? (
           <div>
             <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-foreground/70">

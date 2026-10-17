@@ -106,8 +106,7 @@ export function ChatProductList({
             aria-hidden="true"
           />
           <span>
-            Not yet recommended while the safety questions above remain
-            unresolved.
+            Suggestions only — review the safety check above before dispensing.
           </span>
         </p>
       ) : null}

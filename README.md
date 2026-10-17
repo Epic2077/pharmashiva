@@ -105,8 +105,10 @@ route still verifies the caller itself.
 1. **Interpret** — the message is parsed into structured case facts (JSON mode).
 2. **In parallel:** the deterministic red-flag engine (`lib/safety`) assesses
    urgency, and product retrieval queries Darukade with bounded concurrency.
-3. **Gate** — safety + relevance rules decide whether product cards may be shown;
-   the model can never override or downgrade the safety result.
+3. **Suggest** — product retrieval always returns cards (best-effort even when
+   the relevance gate can't confirm a match), while the deterministic safety
+   result is shown as its own alert above them. The model can never override or
+   downgrade the safety result, and it never withholds the cards.
 4. **Compose** — the answer streams as NDJSON events (`/api/chat`): stage
    status, thinking deltas, safety, products, then text.
 
@@ -121,7 +123,7 @@ npm test
 
 Runs entirely offline (no model, no network) against fixtures: safety
 assessment semantics, safety events, model concerns, the relevance gate,
-product gating, retrieval integration with mocked Darukade responses, and
+product emission, retrieval integration with mocked Darukade responses, and
 interpretation validation. A regression here is a safety regression.
 
 ## Project layout

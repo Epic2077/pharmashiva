@@ -40,14 +40,11 @@ export function AssistantMessage({
       stage === "assessing" ||
       stage === "retrieving");
 
-  // Client-side enforcement: even if a stale or malformed event carried
-  // product cards, a safety assessment that does not allow recommendations
-  // must suppress them here too.
-  const safetyAllowsProducts =
-    !message.safety || message.safety.recommendationPermission === "allowed";
-  const productsSuppressed =
-    Boolean(message.productsSuppressed) || !safetyAllowsProducts;
-  const gateReason = message.productsGateReason ?? "safety_restricted";
+  // Product cards are never suppressed by the safety assessment: the alert is
+  // advisory and appears above the suggestions. Only an explicit backend
+  // `suppressed` flag (no longer emitted) could hide them.
+  const productsSuppressed = Boolean(message.productsSuppressed);
+  const gateReason = message.productsGateReason;
 
   return (
     <motion.div

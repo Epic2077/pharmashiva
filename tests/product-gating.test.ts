@@ -1,7 +1,8 @@
 /**
- * Product-gate tests: the exact `products` stream event payload for each
- * safety state. These pin that disallowed cards can never reach the client,
- * independent of what retrieval returned.
+ * Product-emission tests: the exact `products` stream event payload for each
+ * safety state. Product cards are always shown — the safety assessment is
+ * advisory and never suppresses them — so these pin that cards always pass
+ * through and are only flagged `provisional` when the case is not routine.
  */
 
 import test from "node:test";
@@ -37,7 +38,7 @@ const someProducts = [
   },
 ];
 
-test("emergency assessment suppresses all cards even when retrieval returned products", () => {
+test("emergency assessment still shows the retrieved cards (provisional)", () => {
   const safety = assessSafety(
     extractHeuristicFacts("A chemical splashed into my eye."),
     "A chemical splashed into my eye.",
@@ -50,9 +51,10 @@ test("emergency assessment suppresses all cards even when retrieval returned pro
     intent: "medical_symptom",
   });
 
-  assert.equal(emission.products.length, 0);
-  assert.equal(emission.suppressed, true);
-  assert.equal(emission.gateReason, "safety_blocked");
+  assert.equal(safety.level, "emergency");
+  assert.equal(emission.products.length, 2);
+  assert.equal(emission.suppressed, false);
+  assert.equal(emission.gateReason, null);
   assert.equal(emission.provisional, true);
 });
 
@@ -111,22 +113,30 @@ test("an insufficient-information request still shows retrieved cards", () => {
   assert.equal(emission.provisional, true);
 });
 
-test("the gate never widens a blocked assessment, whatever else happens", () => {
-  const emergency = assessSafety(
-    extractHeuristicFacts("chest pain and can't breathe"),
+test("cards are shown for every safety level, whatever else happens", () => {
+  for (const scenario of [
     "chest pain and can't breathe",
-  );
-  for (const extra of [
-    { products: someProducts, databaseAvailable: true },
-    { products: someProducts, databaseAvailable: false },
+    "A chemical splashed into my eye.",
+    "Ali's eyes are red.",
+    "I want a moisturizer.",
   ]) {
-    const emission = planProductEmission({
-      safety: emergency,
-      ...extra,
-      queries: [],
-      intent: "medical_symptom",
-    });
-    assert.equal(emission.products.length, 0);
-    assert.equal(emission.suppressed, true);
+    const safety = assessSafety(
+      extractHeuristicFacts(scenario),
+      scenario,
+    );
+    for (const extra of [
+      { products: someProducts, databaseAvailable: true },
+      { products: someProducts, databaseAvailable: false },
+    ]) {
+      const emission = planProductEmission({
+        safety,
+        ...extra,
+        queries: [],
+        intent: "medical_symptom",
+      });
+      assert.equal(emission.products.length, 2, scenario);
+      assert.equal(emission.suppressed, false, scenario);
+      assert.equal(emission.gateReason, null, scenario);
+    }
   }
 });

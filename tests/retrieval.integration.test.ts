@@ -46,7 +46,7 @@ const eyeDropsQueryFacts = makeFacts({
   productQueries: ["eye drops"],
 });
 
-test("irrelevant catalog results are rejected — no product cards", async () => {
+test("irrelevant catalog results are surfaced as broad matches, never silently dropped", async () => {
   let searched = 0;
   const dependencies: RetrievalDependencies = {
     search: async (query, options) => {
@@ -70,14 +70,22 @@ test("irrelevant catalog results are rejected — no product cards", async () =>
 
   assert.equal(searched, 1);
   assert.equal(result.databaseAvailable, true);
-  assert.equal(result.products.length, 0);
+  // Nothing passed the relevance gate, so the best allergy-safe catalog hit is
+  // offered as a clearly-labelled broad match instead of showing no products.
+  assert.equal(result.products.length, 1);
+  assert.equal(result.products[0].product.id, "age-bright-1");
+  assert.ok(
+    result.products[0].warnings.some((warning) =>
+      warning.includes("Broad catalog match"),
+    ),
+  );
   assert.ok(
     result.decisions.some(
       (verdict) =>
         verdict.productId === "age-bright-1" &&
         verdict.code === "intended_use_mismatch",
     ),
-    "machine-readable rejection reason must be recorded",
+    "machine-readable rejection reason must still be recorded",
   );
 });
 

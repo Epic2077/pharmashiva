@@ -5,12 +5,13 @@
  * model may *explain* the assessment, but it can never override or downgrade
  * it. The ruleset lives in `./rules.ts` and is version-controlled; the
  * assessment produced here is fully structured (`level`,
- * `recommendationPermission`, …) so the pipeline can enforce the product gate
- * in code instead of relying on prompt wording.
+ * `recommendationPermission`, …) so the UI can present it honestly instead of
+ * relying on prompt wording. Products are always shown; this engine never
+ * withholds them.
  *
  * The function is synchronous and performs no IO, so it can never time out or
  * fail silently: an unexpected internal error falls back to a conservative
- * "insufficient_information" assessment that withholds products.
+ * "insufficient_information" assessment.
  */
 
 import type {
@@ -89,8 +90,8 @@ function permissionForLevel(level: SafetyLevel): RecommendationPermission {
 }
 
 /**
- * Conservative assessment used when the engine itself misbehaves. It must
- * never allow product recommendations.
+ * Conservative assessment used when the engine itself misbehaves. It reports a
+ * restricted stance so the UI reflects that no safety rule actually ran.
  */
 function safeFallbackAssessment(): SafetyAssessment {
   return buildAssessment({
@@ -98,7 +99,7 @@ function safeFallbackAssessment(): SafetyAssessment {
     redFlags: [],
     caution: [],
     reasons: [
-      "The safety assessment could not be completed; product recommendations are withheld as a precaution.",
+      "The safety assessment could not be completed; review the case carefully.",
     ],
     followUpQuestions: [],
     nextSteps: [
@@ -107,8 +108,7 @@ function safeFallbackAssessment(): SafetyAssessment {
     explanation:
       "The safety assessment could not be completed. Please review the case carefully before making any suggestion.",
     title: "Safety assessment unavailable",
-    // Even though insufficient_information normally allows products, a failed
-    // assessment must never widen the gate.
+    // Marks the stance as restricted so callers can tell no safety rule ran.
     permission: "restricted",
   });
 }
@@ -587,7 +587,7 @@ export function coerceSafetyAssessment(
   };
 }
 
-/* ── Recommendation gate (deterministic, backend-enforced) ───── */
+/* ── Recommendation advisory (no longer gates display) ───────── */
 
 const GATE_REASONS: Record<
   RecommendationPermission,
@@ -596,24 +596,24 @@ const GATE_REASONS: Record<
   blocked: {
     code: "safety_blocked",
     reason:
-      "Product suggestions are withheld because this case needs urgent professional attention.",
+      "The safety assessment recommends urgent professional attention before dispensing.",
   },
   restricted: {
     code: "safety_restricted",
     reason:
-      "Product suggestions are withheld because the safety assessment could not be completed.",
+      "The safety assessment could not be completed; review the case carefully.",
   },
   allowed: {
     code: "safety_allowed",
-    reason:
-      "Product suggestions may be shown after relevance and allergy filtering.",
+    reason: "The safety assessment raised no blocking concern.",
   },
 };
 
 /**
- * Turn an assessment into the hard product-card decision. Only a `blocked`
- * assessment (emergency/urgent) withholds the cards; everything else may show
- * product suggestions after relevance and allergy filtering.
+ * Describe the safety assessment's recommendation stance. This is advisory
+ * only: product cards are always shown and are never withheld by this decision.
+ * It is kept for diagnostics, logging and any caller that wants to reflect the
+ * safety stance in its own wording.
  */
 export function productGateDecision(
   assessment: SafetyAssessment,
@@ -625,11 +625,4 @@ export function productGateDecision(
     reasonCode: code,
     reason,
   };
-}
-
-/** Convenience predicate used by the pipeline and the UI. */
-export function permissionAllowsProducts(
-  assessment: Pick<SafetyAssessment, "recommendationPermission">,
-): boolean {
-  return assessment.recommendationPermission === "allowed";
 }

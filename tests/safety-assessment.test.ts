@@ -133,13 +133,14 @@ test("empty message yields insufficient_information, never routine", () => {
   assert.equal(assessment.recommendationPermission, "allowed");
 });
 
-test("an engine failure still withholds products (restricted fallback)", () => {
+test("an engine failure falls back to a conservative restricted stance", () => {
   // A malformed facts object makes the engine throw internally and fall back.
   const broken = { ...makeFacts(), symptoms: null } as unknown as CaseFacts;
   const assessment = assessSafety(broken, "x");
 
   assert.equal(assessment.level, "insufficient_information");
   assert.equal(assessment.recommendationPermission, "restricted");
+  // Advisory only — the pipeline still shows any retrieved products.
   assert.equal(productGateDecision(assessment).allowed, false);
 });
 
