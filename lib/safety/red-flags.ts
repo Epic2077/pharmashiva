@@ -28,21 +28,75 @@ import {
   CAUTION_FOLLOW_UPS,
   CAUTION_RULES,
   EMERGENCY_AND_URGENT_RULES,
+  EYE_PROTOCOL,
+  EYE_PROTOCOL_CAUTION_IDS,
   SAFETY_RULESET_VERSION,
-  eyeRednessResolved,
+  evaluateEyeProtocol,
   type RedFlagRule,
 } from "./rules.ts";
+import {
+  extractClinicalFindings,
+  hasUnnegatedTerm,
+  isResolvedMention,
+  lastMentionIsUnnegated,
+  mentionsResolution,
+  normaliseHealthText,
+  termIsDenied,
+  type ClinicalFinding,
+} from "./text.ts";
 
-function haystack(facts: CaseFacts, rawMessage: string): string {
+/** The stored case history (everything except the current message). */
+function priorCaseText(facts: CaseFacts): string {
+  // `symptoms` comes first so the chronological notes (which include the
+  // customer's later denials) are the *last* mention for contradiction
+  // resolution.
   return [
-    rawMessage,
     facts.summary,
     ...facts.symptoms,
     ...facts.statedFacts,
     facts.duration ?? "",
   ]
-    .join(" \n ")
-    .toLowerCase();
+    .filter(Boolean)
+    .join(" \n ");
+}
+
+/**
+ * Case-aware term matching with latest-answer precedence.
+ *
+ * - A term positively stated in the current message always counts.
+ * - An explicit denial in the current message suppresses the term even if an
+ *   earlier turn mentioned it ("chest pain yesterday, no chest pain now").
+ * - A term from earlier turns remains active unless the current message
+ *   resolves or denies it; a red flag is not dropped merely because the latest
+ *   message stopped mentioning it.
+ * - Historical, resolved mentions ("it settled") are not active findings.
+ */
+function caseTermPresent(term: string, latest: string, prior: string): boolean {
+  if (hasUnnegatedTerm(latest, term)) {
+    return !isResolvedMention(latest, term);
+  }
+  if (termIsDenied(latest, term)) return false;
+  // The last mention in the stored case decides contradictions: a denial on a
+  // previous turn must suppress an even earlier positive mention.
+  if (!lastMentionIsUnnegated(prior, term)) return false;
+  if (isResolvedMention(latest, term) || isResolvedMention(prior, term)) {
+    return false;
+  }
+  return true;
+}
+
+interface AssessmentInput {
+  level: SafetyLevel;
+  redFlags: RedFlagRule[];
+  caution: RedFlagRule[];
+  reasons: string[];
+  followUpQuestions: string[];
+  nextSteps: string[];
+  explanation: string;
+  title: string;
+  /** Explicit permission override; only the engine-failure fallback uses it. */
+  permission?: RecommendationPermission;
+  findings?: ClinicalFinding[];
 }
 
 function isCustomerCase(facts: CaseFacts): boolean {
@@ -113,19 +167,6 @@ function safeFallbackAssessment(): SafetyAssessment {
   });
 }
 
-interface AssessmentInput {
-  level: SafetyLevel;
-  redFlags: RedFlagRule[];
-  caution: RedFlagRule[];
-  reasons: string[];
-  followUpQuestions: string[];
-  nextSteps: string[];
-  explanation: string;
-  title: string;
-  /** Explicit permission override; only the engine-failure fallback uses it. */
-  permission?: RecommendationPermission;
-}
-
 function buildAssessment(input: AssessmentInput): SafetyAssessment {
   const { level } = input;
   const requiresProfessionalEvaluation =
@@ -149,6 +190,7 @@ function buildAssessment(input: AssessmentInput): SafetyAssessment {
     requiresProfessionalEvaluation,
     rulesetVersion: SAFETY_RULESET_VERSION,
     modelConcerns: [],
+    findings: input.findings ?? [],
   };
 }
 
@@ -161,32 +203,50 @@ export function assessSafety(
   rawMessage: string,
 ): SafetyAssessment {
   try {
-    const text = haystack(facts, rawMessage);
+    const latest = normaliseHealthText(rawMessage);
+    const prior = normaliseHealthText(priorCaseText(facts));
 
-    const redFlags = EMERGENCY_AND_URGENT_RULES.filter(
-      (rule) =>
-        rule.terms.some((term) => text.includes(term)) ||
-        rule.test?.(text) === true,
-    );
+    const ruleMatches = (rule: RedFlagRule): boolean => {
+      if (rule.terms.some((term) => caseTermPresent(term, latest, prior))) {
+        return true;
+      }
+      if (!rule.test) return false;
+      if (rule.test(latest) === true) return true;
+      // Earlier-turn predicate findings persist unless the latest message
+      // explicitly reports a normal/resolved state.
+      if (mentionsResolution(latest)) return false;
+      return rule.test(prior) === true;
+    };
+
+    const redFlags = EMERGENCY_AND_URGENT_RULES.filter(ruleMatches);
+
+    // Eye protocol state is tracked per question across the whole case, not
+    // inferred from a count of negations in one arbitrary sentence.
+    const eyeProtocol = evaluateEyeProtocol(latest, prior);
 
     // Caution rules only apply when nothing more serious fired.
     const caution =
-      redFlags.length === 0
-        ? CAUTION_RULES.filter(
-            (rule) =>
-              rule.terms.some((term) => text.includes(term)) ||
-              rule.test?.(text) === true,
-          )
-        : [];
+      redFlags.length === 0 ? CAUTION_RULES.filter(ruleMatches) : [];
 
-    // The pharmacist answered the eye protocol with negations (no pain, no
-    // vision change, no lenses, …): the red-eye concern is resolved and must
-    // not keep gating products.
-    const resolvedEyeRedness =
-      caution.length === 1 &&
-      caution[0].id === "eye-redness-unresolved" &&
-      eyeRednessResolved(rawMessage);
-    const effectiveCaution = resolvedEyeRedness ? [] : caution;
+    // A fully answered, non-positive eye protocol resolves both the red-eye
+    // and eye-pain concerns. A partially answered protocol keeps them active
+    // and only asks the remaining questions.
+    const effectiveCaution = caution.filter(
+      (rule) =>
+        !(EYE_PROTOCOL_CAUTION_IDS.has(rule.id) && eyeProtocol.resolved),
+    );
+
+    const findings = extractClinicalFindings(latest, prior);
+    for (const question of EYE_PROTOCOL) {
+      if (eyeProtocol.statuses[question.id] === "unknown") {
+        findings.push({
+          id: `eye_protocol_${question.id}`,
+          label: question.question,
+          status: "unknown",
+          evidence: "",
+        });
+      }
+    }
 
     // Red flags: highest level wins (emergency > urgent).
     const hasEmergency = redFlags.some((rule) => rule.level === "emergency");
@@ -194,6 +254,14 @@ export function assessSafety(
       const level: SafetyLevel = hasEmergency ? "emergency" : "urgent";
       const steps = Array.from(new Set(redFlags.map((rule) => rule.nextStep)));
       const labels = redFlags.map((rule) => rule.label);
+      // Urgent (not emergency) guidance may be followed by focused questions;
+      // the next step is always listed first and is never conditional on them.
+      const followUps =
+        level === "urgent"
+          ? Array.from(
+              new Set(redFlags.flatMap((rule) => rule.followUpQuestions ?? [])),
+            ).slice(0, 4)
+          : [];
       return buildAssessment({
         level,
         redFlags,
@@ -202,7 +270,7 @@ export function assessSafety(
           `Possible ${labels.join("; ")}.`,
           ...redFlags.map((rule) => rule.explanation),
         ],
-        followUpQuestions: [],
+        followUpQuestions: followUps,
         nextSteps: steps,
         explanation: `This case may involve a red flag: ${labels.join("; ")}. ${redFlags
           .map((rule) => rule.explanation)
@@ -210,6 +278,7 @@ export function assessSafety(
         title: hasEmergency
           ? "Urgent safety concern — act now"
           : "Urgent safety concern",
+        findings,
       });
     }
 
@@ -217,7 +286,11 @@ export function assessSafety(
       const ids = effectiveCaution.map((rule) => rule.id);
       const followUps = Array.from(
         new Set(
-          effectiveCaution.flatMap((rule) => CAUTION_FOLLOW_UPS[rule.id] ?? []),
+          effectiveCaution.flatMap((rule) =>
+            EYE_PROTOCOL_CAUTION_IDS.has(rule.id)
+              ? eyeProtocol.unansweredQuestions
+              : (CAUTION_FOLLOW_UPS[rule.id] ?? []),
+          ),
         ),
       );
       return buildAssessment({
@@ -233,6 +306,7 @@ export function assessSafety(
         explanation:
           "No urgent warning sign was identified, but this symptom needs more information (or pharmacist assessment) before any product can be suggested.",
         title: "More information needed",
+        findings,
       });
     }
 
@@ -270,6 +344,7 @@ export function assessSafety(
         explanation:
           "There is not enough information to determine what is being asked or what would be safe to suggest.",
         title: "More information needed",
+        findings,
       });
     }
 
@@ -283,6 +358,7 @@ export function assessSafety(
       explanation:
         "No urgent warning signs were identified from the information provided. This is not a diagnosis and does not guarantee the customer is safe.",
       title: "No red flags identified",
+      findings,
     });
   } catch {
     // Internal failure must never widen product permission.
@@ -315,7 +391,21 @@ export function applyModelConcerns(
       continue;
     }
     if (typeof reason !== "string" || !reason.trim()) continue;
-    valid.push({ severity, reason: reason.trim().slice(0, 200) });
+    const entry = concern as ModelSafetyConcern;
+    valid.push({
+      ...entry,
+      severity,
+      reason: reason.trim().slice(0, 200),
+      followUpQuestions: Array.isArray(entry.followUpQuestions)
+        ? entry.followUpQuestions
+            .filter(
+              (question): question is string => typeof question === "string",
+            )
+            .map((question) => question.trim().slice(0, 200))
+            .filter(Boolean)
+            .slice(0, 3)
+        : undefined,
+    });
     if (valid.length >= 4) break;
   }
   if (valid.length === 0) return assessment;
@@ -335,12 +425,32 @@ export function applyModelConcerns(
   );
   const concernText = valid.map((concern) => concern.reason).join("; ");
 
+  const concernFindings: ClinicalFinding[] = valid.map((concern, index) => ({
+    id: `model_concern_${index + 1}`,
+    label: "AI-identified safety concern",
+    status: "present",
+    evidence: concern.reason.slice(0, 120),
+  }));
+
+  const concernQuestions = valid.flatMap(
+    (concern) => concern.followUpQuestions ?? [],
+  );
+
   if (level === assessment.level) {
+    const mergedQuestions =
+      level === "caution"
+        ? Array.from(
+            new Set([...assessment.followUpQuestions, ...concernQuestions]),
+          ).slice(0, 8)
+        : assessment.followUpQuestions;
     return {
       ...assessment,
       modelConcerns: [...assessment.modelConcerns, ...valid],
       reasons: [...assessment.reasons, ...reasonLines],
       explanation: `The assistant flagged: ${concernText}. ${assessment.explanation}`,
+      findings: [...assessment.findings, ...concernFindings],
+      questions: mergedQuestions,
+      followUpQuestions: mergedQuestions,
     };
   }
 
@@ -366,10 +476,17 @@ export function applyModelConcerns(
   const followUpQuestions =
     level === "emergency" || level === "urgent"
       ? []
-      : level === "caution" && assessment.followUpQuestions.length === 0
-        ? [
-            "Please verify this concern with a reliable reference before any product is suggested.",
-          ]
+      : level === "caution"
+        ? Array.from(
+            new Set([
+              ...(assessment.followUpQuestions.length > 0
+                ? assessment.followUpQuestions
+                : [
+                    "Please verify this concern with a reliable reference before any product is suggested.",
+                  ]),
+              ...concernQuestions,
+            ]),
+          ).slice(0, 8)
         : assessment.followUpQuestions;
 
   return {
@@ -397,6 +514,7 @@ export function applyModelConcerns(
       level === "urgent" ||
       assessment.requiresProfessionalEvaluation,
     modelConcerns: [...assessment.modelConcerns, ...valid],
+    findings: [...assessment.findings, ...concernFindings],
   };
 }
 
@@ -531,6 +649,36 @@ export function coerceSafetyAssessment(
     }
   }
 
+  // Structured findings are validated on read as well.
+  const findings: ClinicalFinding[] = [];
+  if (Array.isArray(record.findings)) {
+    for (const item of record.findings as unknown[]) {
+      if (!item || typeof item !== "object") continue;
+      const entry = item as Record<string, unknown>;
+      const status = entry.status;
+      if (
+        typeof entry.id !== "string" ||
+        typeof entry.label !== "string" ||
+        (status !== "present" &&
+          status !== "denied" &&
+          status !== "historical" &&
+          status !== "unknown")
+      ) {
+        continue;
+      }
+      findings.push({
+        id: entry.id.slice(0, 80),
+        label: entry.label.slice(0, 160),
+        status,
+        evidence:
+          typeof entry.evidence === "string"
+            ? entry.evidence.slice(0, 200)
+            : "",
+      });
+      if (findings.length >= 24) break;
+    }
+  }
+
   // Permission is narrowed conservatively: a HIGH_RISK row can never widen
   // itself to "allowed", no matter what the stored payload claims.
   const storedPermission =
@@ -584,6 +732,7 @@ export function coerceSafetyAssessment(
         ? record.rulesetVersion
         : "unknown",
     modelConcerns,
+    findings,
   };
 }
 

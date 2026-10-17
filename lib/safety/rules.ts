@@ -19,7 +19,17 @@
  * condition is harmless.
  */
 
-export const SAFETY_RULESET_VERSION = "1.0.0";
+import {
+  normaliseDigits,
+  normaliseHealthText,
+  patternIsDenied,
+  patternIsHypothetical,
+  unnegatedPattern,
+} from "./text.ts";
+
+export { hasUnnegatedTerm, normaliseDigits } from "./text.ts";
+
+export const SAFETY_RULESET_VERSION = "1.2.0";
 
 export const SAFETY_RULESET_NOTE =
   "Deterministic red-flag criteria (v" +
@@ -45,18 +55,11 @@ export interface RedFlagRule {
   test?: (text: string) => boolean;
   explanation: string;
   nextStep: string;
+  /** Optional focused questions to ask after displaying the safety next step. */
+  followUpQuestions?: string[];
 }
 
 /* ── Normalisation / detection helpers ───────────────────────── */
-
-/** Normalise Persian/Arabic-Indic digits to ASCII so "۱۰/۱۰" is understood. */
-export function normaliseDigits(text: string): string {
-  return text.replace(/[\u06f0-\u06f9\u0660-\u0669]/g, (digit) => {
-    const code = digit.charCodeAt(0);
-    const base = code >= 0x06f0 ? 0x06f0 : 0x0660;
-    return String(code - base);
-  });
-}
 
 /** Parse a pain score such as "10/10" or "10 out of 10"; null when absent. */
 export function painScore(text: string): number | null {
@@ -74,8 +77,14 @@ const PAIN_TERMS =
   /\b(?:pain|painful|hurts?|hurting|aching|ache|sore|soreness|discomfort)\b|درد|دردناک/i;
 const SEVERE_TERMS =
   /\b(?:severe|severely|intense|intensely|extreme|extremely|unbearable|excruciating|agoni[sz]ing|intolerable|worst|killing me|really bad)\b|شدید|طاقت ?فرسا/i;
-const EYE_RED_TERMS =
-  /\b(?:red (?:eye|eyes)|eyes? (?:are|is|look|looks|became|becomes|turned) red|redness (?:in|of) (?:the )?(?:eye|eyes)|bloodshot)\b|قرمزی چشم|چشم(?:م|ش|ت)? قرمز|چشم قرمز شده/i;
+export const EYE_RED_TERMS =
+  /\b(?:red (?:eye|eyes)|eyes? (?:are|is|look|looks|became|becomes|turned) red|eyes? red|redness (?:in|of) (?:the )?(?:eye|eyes)|redness in (?:my|his|her|their|the patient's|the patients') eyes?|bloodshot)\b|قرمزی چشم|چشم(?:م|ش|ت|ام|اش|هاش|هاشون)? قرمز|چشم قرمز شده|چشماش قرمزه|چشمهاش قرمزه|چشمام قرمزه/i;
+/**
+ * Eye pain or discomfort (without a red-flag feature). This is a symptom that
+ * needs the eye protocol questions, not a routine shopping request.
+ */
+export const EYE_PAIN_TERMS =
+  /\b(?:eye|eyes|ocular)\b[^.!?\n]{0,24}\b(?:pain|painful|hurt|hurts|hurting|ache|aches|aching|sore|soreness|discomfort|irritat\w*)\b|\b(?:pain|painful|hurt|hurts|hurting|ache|aches|aching|sore|soreness|discomfort|irritat\w*)\b[^.!?\n]{0,24}\b(?:eye|eyes|ocular)\b|درد چشم|چشم درد|چشم(?:م|ش|ت|ام|اش|هاش)? درد|سوزش چشم|خارش چشم|چشم(?:م|ش|ت|ام|اش|هاش)? (?:درد می\s?کند|درد می\s?کنه|می\s?سوزد)/i;
 const CONTACT_LENS_TERMS = /\b(?:contact lens(?:es)?|lenses)\b|لنز/i;
 const VISION_CHANGE_TERMS =
   /\b(?:blurred|blurry|blur)\s+vision|vision\s+(?:is\s+)?(?:blurr\w+|gett\w+\s+worse|worse|chang\w+)|seeing\s+(?:halos|double)|double vision|تاری دید|تار شدن دید|دوبینی/i;
@@ -91,26 +100,25 @@ const CHEMICAL_EYE_TERMS =
  */
 function isSeverePain(text: string): boolean {
   if (!PAIN_TERMS.test(text)) return false;
+  // Hypothetical examples ("if I had severe pain") are not findings.
+  if (patternIsHypothetical(PAIN_TERMS, text)) return false;
   const score = painScore(text);
   if (score !== null && score >= 8) return true;
+  // Every severe occurrence must be unnegated.
+  if (!unnegated(SEVERE_TERMS, text)) return false;
   const severe = SEVERE_TERMS.exec(text);
   if (!severe) return false;
   const before = text.slice(Math.max(0, severe.index - 24), severe.index);
   return !/\b(?:no|not|none|never|without|ندارد|نیست|بدون)\b\s*$/.test(before);
 }
 
-const NEGATION_NEAR =
-  /\b(?:no|not|none|never|without|doesn't|does\s+not|wears?\s+no|ندارد|نیست|بدون)\b/i;
-
 /**
- * True when the pattern matches and is NOT negated in the ~16 characters
- * before the match (e.g. "no vision change" must not fire a vision rule).
+ * True when the pattern matches and at least one occurrence is NOT locally
+ * negated (e.g. "no vision change" must not fire a vision rule). The
+ * clause-scoped implementation lives in `./text.ts`.
  */
 function unnegated(pattern: RegExp, text: string): boolean {
-  const match = pattern.exec(text);
-  if (!match) return false;
-  const before = text.slice(Math.max(0, match.index - 16), match.index);
-  return !NEGATION_NEAR.test(before);
+  return unnegatedPattern(pattern, text);
 }
 
 /**
@@ -389,6 +397,11 @@ export const EMERGENCY_AND_URGENT_RULES: RedFlagRule[] = [
       "Eye pain together with a change in vision or sensitivity to light can indicate a sight-threatening condition such as acute glaucoma or keratitis.",
     nextStep:
       "Arrange same-day eye assessment. Do not apply drops or ointments before the eye is examined.",
+    followUpQuestions: [
+      "Did the vision change start suddenly, and is it getting worse?",
+      "Is there significant eye pain or sensitivity to light?",
+      "Was there an injury or chemical exposure, and does the customer wear contact lenses?",
+    ],
   },
   {
     id: "eye-contact-lens-redness",
@@ -396,11 +409,81 @@ export const EMERGENCY_AND_URGENT_RULES: RedFlagRule[] = [
     level: "urgent",
     terms: [],
     test: (text) =>
-      EYE_RED_TERMS.test(text) && unnegated(CONTACT_LENS_TERMS, text),
+      unnegated(EYE_RED_TERMS, text) && unnegated(CONTACT_LENS_TERMS, text),
     explanation:
       "A red or painful eye in a contact-lens wearer can indicate a serious corneal infection.",
     nextStep:
       "Remove the contact lenses now and do not wear them again until the eye has been assessed. If the eye does not settle quickly, arrange same-day eye assessment.",
+    followUpQuestions: [
+      "Is there eye pain, light sensitivity, or any change in vision?",
+      "When did the redness start, and is it getting worse?",
+      "Was there any injury or chemical exposure?",
+    ],
+  },
+  {
+    id: "skin-infection",
+    label: "possible spreading skin infection",
+    level: "urgent",
+    terms: [
+      "spreading redness",
+      "red streaks",
+      "red streak from the wound",
+      "infected wound",
+      "wound with pus",
+      "cellulitis",
+      "قرمزی گسترده",
+      "خطوط قرمز",
+      "چرک",
+    ],
+    explanation:
+      "Spreading redness, red streaks or pus from a wound can indicate a serious skin infection that needs prompt assessment.",
+    nextStep:
+      "Arrange prompt medical assessment today. Do not apply cosmetic products over the area.",
+    followUpQuestions: [
+      "Is the redness spreading, and is there fever, warmth or pus?",
+      "When did it start, and was there a wound, bite or injury?",
+    ],
+  },
+  {
+    id: "burns",
+    label: "significant burn",
+    level: "urgent",
+    terms: [
+      "severe burn",
+      "deep burn",
+      "third degree burn",
+      "chemical burn",
+      "burn over a large area",
+      "سوختگی شدید",
+      "سوختگی درجه سه",
+    ],
+    explanation:
+      "A deep, extensive or chemical burn needs prompt professional wound care and infection assessment.",
+    nextStep:
+      "Cool the burn with clean running water and seek same-day medical assessment. Do not apply ointments or cosmetics before review.",
+    followUpQuestions: [
+      "How large is the burn, and what caused it?",
+      "Is there blistering, white/charred skin, or numbness?",
+    ],
+  },
+  {
+    id: "adverse-drug-reaction",
+    label: "possible adverse drug reaction",
+    level: "urgent",
+    terms: [],
+    test: (text) =>
+      unnegated(
+        /\b(?:adverse|bad)\s+(?:reaction|effect)\b|\breaction to (?:the |my |her |his )?(?:medicine|medication|tablet|drug|supplement)\b|\brash after taking\b|واکنش (?:دارویی|به دارو)|حساسیت دارویی/i,
+        text,
+      ),
+    explanation:
+      "A reaction after starting a medicine or supplement needs prompt review before another product is suggested.",
+    nextStep:
+      "Stop the suspected product and arrange prompt medical or pharmacist review. Seek emergency care if there is facial/throat swelling or breathing difficulty.",
+    followUpQuestions: [
+      "Which medicine or supplement was started, when, and what reaction occurred?",
+      "Is there any facial swelling, breathing difficulty, blistering or fever?",
+    ],
   },
   {
     id: "abdominal-emergency",
@@ -449,9 +532,9 @@ export const EMERGENCY_AND_URGENT_RULES: RedFlagRule[] = [
 ];
 
 /**
- * Advisory (caution) rules. These do not escalate on their own — they gate
- * product recommendations and ask focused questions so the missing
- * information can be collected safely.
+ * Advisory (caution) rules. These request focused questions when key information
+ * is missing. Product-card visibility is separate from clinical clearance;
+ * symptom-directed suitability must still be checked independently.
  */
 export const CAUTION_RULES: RedFlagRule[] = [
   {
@@ -459,11 +542,34 @@ export const CAUTION_RULES: RedFlagRule[] = [
     label: "red eyes without enough information",
     level: "caution",
     terms: ["red eye", "red eyes", "قرمزی چشم"],
-    test: (text) => EYE_RED_TERMS.test(text),
+    test: (text) => unnegated(EYE_RED_TERMS, text),
     explanation:
       "Red eyes have many possible causes. Without knowing about pain, vision changes, injury, chemical exposure or contact-lens use, no product should be suggested.",
     nextStep:
       "Ask about pain, vision changes, light sensitivity, injury or chemical exposure, and contact-lens use before considering any product.",
+  },
+  {
+    id: "eye-pain-unresolved",
+    label: "eye pain or discomfort without enough information",
+    level: "caution",
+    terms: [
+      "eye pain",
+      "eye hurts",
+      "eye hurting",
+      "eyes hurt",
+      "eyes hurting",
+      "painful eye",
+      "sore eye",
+      "eye discomfort",
+      "eye irritation",
+      "درد چشم",
+      "چشم درد",
+    ],
+    test: (text) => unnegated(EYE_PAIN_TERMS, text),
+    explanation:
+      "Eye pain or discomfort has many possible causes. Without knowing about pain severity, vision changes, injury, chemical exposure or contact-lens use, no product should be suggested.",
+    nextStep:
+      "Ask about pain severity, vision changes, light sensitivity, injury or chemical exposure, and contact-lens use before considering any product.",
   },
   {
     id: "medication-combination-question",
@@ -497,14 +603,137 @@ export const CAUTION_RULES: RedFlagRule[] = [
   },
 ];
 
-/** Focused questions attached to the eye-redness caution rule. */
-export const EYE_REDNESS_FOLLOW_UPS: string[] = [
-  "Is the eye painful, and how severe is the pain?",
-  "Has the vision changed at all (blurring, halos, loss of sight)?",
-  "Is the eye sensitive to light?",
-  "Was there any injury, or did anything (including a chemical) get into the eye?",
-  "Does the customer wear contact lenses?",
+/* ── Eye protocol (tracked answers) ──────────────────────────── */
+
+export type ProtocolAnswerStatus = "present" | "denied" | "unknown";
+
+export interface EyeProtocolQuestion {
+  id: string;
+  question: string;
+  /** Pattern that detects a positive answer to this question. */
+  present: RegExp;
+  /** Pattern that detects an explicit negative ("no pain", "vision is fine"). */
+  denied: RegExp;
+}
+
+/**
+ * The eye-redness protocol. Each concern is tracked independently across the
+ * whole consultation; the latest answer wins, and a concern is only resolved
+ * when every protocol question has an answer and none is positive.
+ */
+export const EYE_PROTOCOL: EyeProtocolQuestion[] = [
+  {
+    id: "pain",
+    question: "Is the eye painful, and how severe is the pain?",
+    present: EYE_PAIN_TERMS,
+    denied:
+      /\bno(?:t)?\s+(?:any\s+)?(?:eye\s+)?pain\b|\bpainless\b|\beyes?\s+(?:do\s+not|don'?t|does\s+not|doesn'?t)\s+hurt\b|\beyes?\s+(?:are\s+)?(?:fine|not\s+sore)\b|بدون درد|درد ندارد|درد نمی\s?کند/i,
+  },
+  {
+    id: "vision",
+    question: "Has the vision changed at all (blurring, halos, loss of sight)?",
+    present: VISION_CHANGE_TERMS,
+    denied:
+      /\bvision\s+(?:is\s+)?(?:fine|ok|okay|normal|clear|good)\b|\bno\s+(?:vision|visual)\s+(?:change|changes|loss|blur\w*)\b|\b(?:vision|sight)\s+(?:is\s+)?(?:unchanged|normal)\b|دید(?:ش)?\s+(?:خوب|عادی|طبیعی|سالم)\s*است|تغییری در دید ندارد/i,
+  },
+  {
+    id: "light",
+    question: "Is the eye sensitive to light?",
+    present: LIGHT_SENSITIVITY_TERMS,
+    denied:
+      /\bno(?:t)?\s+(?:any\s+)?(?:light\s+sensitivity|sensitive(?:ness)?\s+to\s+light)\b|\blight\s+(?:doesn'?t|does\s+not)\s+bother\b|حساسیت به نور ندارد|نور اذیتش نمی/i,
+  },
+  {
+    id: "injury",
+    question:
+      "Was there any injury, or did anything (including a chemical) get into the eye?",
+    present:
+      /\b(?:eye injury|injured my eye|eye trauma|hit in the eye|something (?:got )?in my eye|object in my eye|foreign body in my eye|chemical[^.!?\n]{0,24}eye|eye[^.!?\n]{0,24}chemical)\b|آسیب چشم|ضربه به چشم|چیزی[^.!?\n]{0,16}چشم|مواد شیمیایی[^.!?\n]{0,16}چشم/i,
+    denied:
+      /\bno\s+(?:injury|trauma|chemical)\b|\bnothing\s+(?:got|went|went\s+into|got\s+into)\s+(?:the\s+)?eye\b|\bnothing\s+(?:got|went)\s+in(?:to)?\s+(?:the\s+)?eye\b|آسیب ندیده|ضربه ندیده|چیزی نرفته|مواد شیمیایی نبوده/i,
+  },
+  {
+    id: "lenses",
+    question: "Does the customer wear contact lenses?",
+    present: CONTACT_LENS_TERMS,
+    denied:
+      /\b(?:no|not|never|doesn'?t|does\s+not|don'?t|do\s+not|wears?\s+no)\b[^.!?\n]{0,20}\b(?:contact\s+lens(?:es)?|lenses)\b|\bwithout\s+(?:contact\s+)?lenses\b|لنز ندارد|لنز نمی ?زند|لنز ?زده/i,
+  },
 ];
+
+export interface EyeProtocolState {
+  statuses: Record<string, ProtocolAnswerStatus>;
+  answered: string[];
+  unanswered: string[];
+  unansweredQuestions: string[];
+  present: string[];
+  /** All questions answered and no positive finding. */
+  resolved: boolean;
+}
+
+function protocolStatusFor(
+  question: EyeProtocolQuestion,
+  text: string,
+): ProtocolAnswerStatus {
+  const present = unnegated(question.present, text);
+  const denied =
+    question.denied.test(text) || patternIsDenied(question.present, text);
+  if (present) return "present";
+  if (denied) return "denied";
+  return "unknown";
+}
+
+/**
+ * Evaluate the eye protocol over the whole consultation. The latest message
+ * wins for each question; earlier answers are retained only when the latest
+ * message did not address that question. This avoids both "resolved because
+ * one arbitrary sentence had enough negations" and "active forever".
+ */
+export function evaluateEyeProtocol(
+  latestMessage: string,
+  priorCaseText = "",
+): EyeProtocolState {
+  const latest = normaliseHealthText(latestMessage);
+  const prior = normaliseHealthText(priorCaseText);
+  const statuses: Record<string, ProtocolAnswerStatus> = {};
+
+  for (const question of EYE_PROTOCOL) {
+    let status = protocolStatusFor(question, latest);
+    if (status === "unknown" && prior) {
+      status = protocolStatusFor(question, prior);
+    }
+    statuses[question.id] = status;
+  }
+
+  const answered = EYE_PROTOCOL.filter(
+    (question) => statuses[question.id] !== "unknown",
+  );
+  const unanswered = EYE_PROTOCOL.filter(
+    (question) => statuses[question.id] === "unknown",
+  );
+  const present = EYE_PROTOCOL.filter(
+    (question) => statuses[question.id] === "present",
+  );
+
+  return {
+    statuses,
+    answered: answered.map((question) => question.id),
+    unanswered: unanswered.map((question) => question.id),
+    unansweredQuestions: unanswered.map((question) => question.question),
+    present: present.map((question) => question.id),
+    resolved: unanswered.length === 0 && present.length === 0,
+  };
+}
+
+/** True when the case's eye protocol is fully answered and non-positive. */
+export function eyeRednessResolved(text: string): boolean {
+  return evaluateEyeProtocol(text).resolved;
+}
+
+/** Focused questions attached to the eye-redness caution rule. */
+export const EYE_REDNESS_FOLLOW_UPS: string[] = EYE_PROTOCOL.map(
+  (question) => question.question,
+);
 
 /** Focused questions attached to the medicine-interaction caution rule. */
 export const MEDICATION_INTERACTION_FOLLOW_UPS: string[] = [
@@ -514,31 +743,18 @@ export const MEDICATION_INTERACTION_FOLLOW_UPS: string[] = [
 /** Per-rule follow-up questions used by the assessment engine. */
 export const CAUTION_FOLLOW_UPS: Record<string, string[]> = {
   "eye-redness-unresolved": EYE_REDNESS_FOLLOW_UPS,
+  "eye-pain-unresolved": EYE_REDNESS_FOLLOW_UPS,
   "medication-combination-question": MEDICATION_INTERACTION_FOLLOW_UPS,
 };
 
-/* ── Eye-protocol resolution ─────────────────────────────────── */
-
 /**
- * Negation patterns covering the eye-redness follow-ups. When the pharmacist
- * answers at least three of the five protocol questions with a negation (and
- * nothing escalated), the red-eye concern is considered resolved and ordinary
- * product evaluation may proceed within scope.
+ * Caution rules that share the tracked eye protocol. They are resolved by the
+ * same complete-answer rule, not by individual keyword counts.
  */
-const EYE_RESOLUTION_PATTERNS: RegExp[] = [
-  /\bno(?:t)?\s+(?:any\s+)?(?:eye\s+)?pain\b|\bpainless\b|بدون درد|درد ندارد/i,
-  /\bvision\s+(?:is\s+)?(?:fine|ok|okay|normal|clear|good)\b|\bno\s+(?:vision|visual)\s+(?:change|changes|loss|blur\w*)\b|دید(?:ش)?\s+(?:خوب|عادی|طبیعی|سالم)\s*است|تغییری در دید ندارد/i,
-  /\bno(?:t)?\s+(?:light\s+sensitivity|sensitive\s+to\s+light)\b|حساسیت به نور ندارد/i,
-  /\bno\s+(?:injury|trauma|chemical)\b|\bnothing\s+(?:got|went)\s+in(?:to)?\s+(?:the\s+)?eye\b|آسیب ندیده|ضربه ندیده/i,
-  /\b(?:no|not|never|doesn't|does\s+not|wears?\s+no)\b[^.!?\n]{0,20}\b(?:contact\s+lens(?:es)?|lenses)\b|\bwithout\s+(?:contact\s+)?lenses\b|لنز ندارد|لنز نمی ?زند/i,
-];
-
-/** True when the current message answers the eye protocol with negations. */
-export function eyeRednessResolved(text: string): boolean {
-  return (
-    EYE_RESOLUTION_PATTERNS.filter((pattern) => pattern.test(text)).length >= 3
-  );
-}
+export const EYE_PROTOCOL_CAUTION_IDS = new Set([
+  "eye-redness-unresolved",
+  "eye-pain-unresolved",
+]);
 
 /** Ids of rules whose questions must be asked before any product is shown. */
 export const CAUTION_RULE_IDS = new Set(CAUTION_RULES.map((rule) => rule.id));
