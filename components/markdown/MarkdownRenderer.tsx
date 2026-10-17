@@ -10,7 +10,10 @@ interface MarkdownRendererProps {
 }
 
 /** Renders assistant replies as markdown using the shared component map. */
-export function MarkdownRenderer({ children, theme = "light" }: MarkdownRendererProps) {
+export function MarkdownRenderer({
+  children,
+  theme = "light",
+}: MarkdownRendererProps) {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
