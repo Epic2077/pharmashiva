@@ -2,7 +2,7 @@
 
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { createMarkdownComponents } from "./MarkDown";
+import { createMarkdownComponents } from "./MarkdownComponents";
 
 interface MarkdownRendererProps {
   children: string;
