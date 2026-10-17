@@ -54,6 +54,15 @@ export interface RetrievalDependencies {
     category: { name: string } | undefined,
     language: LanguageCode,
   ) => Promise<string | null>;
+  /**
+   * English display-name fallback for listing-only products (the source only
+   * exposes `enName` on the detail page). Injecting it keeps this module
+   * network-free for tests.
+   */
+  localizeProductName?: (
+    name: string,
+    language: LanguageCode,
+  ) => Promise<string | null>;
 }
 
 const defaultDependencies: Required<RetrievalDependencies> = {
@@ -67,6 +76,7 @@ const defaultDependencies: Required<RetrievalDependencies> = {
       products: result.products,
     })),
   localizeCategory: async (category) => category?.name ?? null,
+  localizeProductName: async () => null,
 };
 
 export interface ProductRetrievalResult {
@@ -324,7 +334,9 @@ export async function retrieveProducts(params: {
   const merged = [...byId.values()];
   const { products: enrichedProducts } = await deps.enrich(
     merged.map((entry) => entry.product),
-    { detailLimit: 10, budgetMs: 6_000 },
+    // Cover enough candidates that relevance re-ranking cannot surface an
+    // unenriched card (which would fall back to the Persian source name).
+    { detailLimit: 12, budgetMs: 6_500 },
   );
   const enrichedById = new Map(
     enrichedProducts.map((product) => [product.id, product]),
@@ -408,18 +420,33 @@ export async function retrieveProducts(params: {
     .slice(0, limit);
 
   const products = await Promise.all(
-    ranked.map(async (candidate) => ({
-      product: candidate.product,
-      categoryName: await deps.localizeCategory(
-        candidate.product.categories[0],
-        language,
-      ),
-      reason: buildReason(candidate.product, facts),
-      compatibility: candidate.compatibility,
-      warnings: candidate.warnings,
-      score: candidate.score,
-      provisional,
-    })),
+    ranked.map(async (candidate) => {
+      // The Darukade listing payload has no English name; it only exists on
+      // the product detail page. If enrichment did not finish in the time
+      // budget, the card would otherwise render the Persian source name even
+      // in an English UI. Ask the injected, bounded localizer for a display
+      // name without changing any verified catalog facts.
+      const needsEnglishName = language === "en" && !candidate.product.name_en;
+      const localizedName = needsEnglishName
+        ? await deps.localizeProductName(candidate.product.name, language)
+        : null;
+      const product = localizedName
+        ? { ...candidate.product, name_en: localizedName }
+        : candidate.product;
+
+      return {
+        product,
+        categoryName: await deps.localizeCategory(
+          product.categories[0],
+          language,
+        ),
+        reason: buildReason(product, facts),
+        compatibility: candidate.compatibility,
+        warnings: candidate.warnings,
+        score: candidate.score,
+        provisional,
+      };
+    }),
   );
 
   // `signal` is accepted for symmetry; queries above are short-lived so they

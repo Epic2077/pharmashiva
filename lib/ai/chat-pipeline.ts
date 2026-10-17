@@ -9,7 +9,10 @@
  */
 
 import type { LanguageCode } from "@/lib/i18n";
-import { localizeCategoryName } from "@/lib/i18n-server";
+import {
+  localizeCategoryName,
+  translateFaToEnBounded,
+} from "@/lib/i18n-server";
 import {
   applyModelConcerns,
   applyModelFollowUpQuestions,
@@ -127,6 +130,35 @@ async function localizeCategorySafe(
   }
 }
 
+const LATIN_ONLY = /^[\x00-\x7F\s]*$/;
+
+/**
+ * English display-name fallback for listing-only products. Darukade exposes
+ * the English name only on the detail page, so when enrichment exceeds its
+ * budget (common on a cold production instance) the card would otherwise show
+ * the Persian `name`. This is a bounded, cached display translation — it never
+ * changes the verified source fields and never blocks the stream.
+ */
+async function localizeProductNameSafe(
+  name: string,
+  language: LanguageCode,
+): Promise<string | null> {
+  if (language !== "en") return null;
+  const trimmed = name.trim();
+  if (!trimmed || LATIN_ONLY.test(trimmed)) return null;
+
+  try {
+    return await Promise.race([
+      translateFaToEnBounded(trimmed, 1_200),
+      new Promise<null>((resolve) => {
+        setTimeout(() => resolve(null), 1_400);
+      }),
+    ]);
+  } catch {
+    return null;
+  }
+}
+
 export async function runChatPipeline({
   message,
   history,
@@ -186,7 +218,10 @@ export async function runChatPipeline({
       language,
       provisional: true,
       signal,
-      dependencies: { localizeCategory: localizeCategorySafe },
+      dependencies: {
+        localizeCategory: localizeCategorySafe,
+        localizeProductName: localizeProductNameSafe,
+      },
     }),
   ]);
   mark("interpreted");
@@ -272,7 +307,10 @@ export async function runChatPipeline({
       language,
       provisional: false,
       signal,
-      dependencies: { localizeCategory: localizeCategorySafe },
+      dependencies: {
+        localizeCategory: localizeCategorySafe,
+        localizeProductName: localizeProductNameSafe,
+      },
     });
     recordDecisions(refined);
     // If AI suggestions found products, use them as the primary result.

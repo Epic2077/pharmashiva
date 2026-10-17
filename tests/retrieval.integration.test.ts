@@ -187,6 +187,39 @@ test("a bare eye-symptom message still searches for eye products", async () => {
   );
 });
 
+test("listing-only products get an English display name in an English UI", async () => {
+  const persianNamed = makeProduct({
+    id: "eye-drops-fa",
+    name: "قطره چشم مرطوب کننده",
+    name_fa: "قطره چشم مرطوب کننده",
+    name_en: null,
+    categories: [makeCategory("Eye care"), makeCategory("Eye drops")],
+    ingredients: [makeIngredient("Hypromellose")],
+    detailLoaded: false,
+  });
+  const dependencies: RetrievalDependencies = {
+    search: searchReturning([{ product: persianNamed, rank: 1 }]),
+    enrich: enrichPassthrough(),
+    localizeCategory: localizeIdentity(),
+    localizeProductName: async (name, language) =>
+      language === "en" ? "Lubricant Eye Drops" : null,
+  };
+
+  const result = await retrieveProducts({
+    facts: eyeDropsQueryFacts,
+    message: "Ali's eyes are red.",
+    language: "en",
+    provisional: false,
+    signal,
+    dependencies,
+  });
+
+  assert.equal(result.products.length, 1);
+  assert.equal(result.products[0].product.name_en, "Lubricant Eye Drops");
+  // The verified Persian source name is preserved, not replaced.
+  assert.equal(result.products[0].product.name_fa, "قطره چشم مرطوب کننده");
+});
+
 test("multiple valid candidates are ranked deterministically", async () => {
   const lowerRanked = makeProduct({
     id: "eye-drops-2",
