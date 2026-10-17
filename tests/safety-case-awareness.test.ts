@@ -130,6 +130,29 @@ test("the eye-pain protocol resolves once all questions are answered", () => {
   assert.equal(assessment.level, "routine");
 });
 
+/* ── Model-free beauty/shopping requests ────────────────────── */
+
+test('"dry hair" is a routine request even without the AI model', () => {
+  for (const message of ["dry hair", "my hair is very dry", "خشکی مو"]) {
+    const facts = extractHeuristicFacts(message);
+    const assessment = assessSafety(facts, message);
+
+    assert.equal(assessment.level, "routine", message);
+    assert.equal(assessment.recommendationPermission, "allowed", message);
+    // The deterministic path must have a symptom to act on, otherwise the
+    // request would incorrectly fall through to "more information needed".
+    assert.ok(facts.symptoms.length > 0, message);
+  }
+});
+
+test("negated beauty symptoms are not treated as requests", () => {
+  const facts = extractHeuristicFacts("no dry hair");
+  const assessment = assessSafety(facts, "no dry hair");
+
+  assert.deepEqual(facts.symptoms, []);
+  assert.equal(assessment.level, "insufficient_information");
+});
+
 /* ── Wider body-system coverage ─────────────────────────────── */
 
 test("a spreading skin infection is urgent", () => {

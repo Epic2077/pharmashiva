@@ -15,6 +15,7 @@ import {
   hasUnnegatedTerm,
   isResolvedMention,
   normaliseHealthText,
+  unnegatedPattern,
 } from "../safety/text.ts";
 
 const SYMPTOM_TERMS: string[] = [
@@ -49,6 +50,19 @@ const SYMPTOM_TERMS: string[] = [
   "sneezing",
   "acne",
   "hair loss",
+  "dry hair",
+  "dry scalp",
+  "frizzy hair",
+  "split ends",
+  "hair fall",
+  "dandruff",
+  "dry skin",
+  "oily skin",
+  "sensitive skin",
+  "eczema",
+  "psoriasis",
+  "dark spots",
+  "wrinkles",
   "red eye",
   "red eyes",
   "eye redness",
@@ -71,6 +85,13 @@ const SYMPTOM_TERMS: string[] = [
   "سردرد",
   "قرمزی چشم",
   "درد چشم",
+  "خشکی مو",
+  "موخوره",
+  "شوره",
+  "ریزش مو",
+  "پوست خشک",
+  "پوست چرب",
+  "چین و چروک",
   "چشم درد",
   "چشمم درد",
   "چشمام درد",
@@ -90,6 +111,29 @@ const SYMPTOM_TERMS: string[] = [
   "بی خوابی",
   "اضطراب",
   "عفونت",
+];
+
+/**
+ * Order-independent phrasings that the exact list above cannot express
+ * ("my hair is very dry", "eyes are really hurting"). Each pattern is still
+ * negation/hypothesis-aware and maps to a canonical symptom label.
+ */
+const SYMPTOM_PATTERNS: Array<{ pattern: RegExp; symptom: string }> = [
+  {
+    pattern:
+      /\b(?:eye|eyes|ocular)\b[^.!?\n]{0,24}\b(?:pain|painful|hurt|hurts|hurting|ache|aches|aching|sore|discomfort|irritat\w*)\b|\b(?:pain|painful|hurt|hurts|hurting|ache|aches|aching|sore|discomfort|irritat\w*)\b[^.!?\n]{0,24}\b(?:eye|eyes|ocular)\b|درد چشم|چشم درد|سوزش چشم/i,
+    symptom: "eye pain",
+  },
+  {
+    pattern:
+      /\b(?:dry|damaged|frizzy|brittle)\b[^.!?\n]{0,24}\b(?:hair|scalp)\b|\b(?:hair|scalp)\b[^.!?\n]{0,24}\b(?:dry|damaged|frizzy|brittle)\b|خشکی مو|مو(?:م|ت|ش|اش|هام)? خشک|موخوره|شوره/i,
+    symptom: "dry hair",
+  },
+  {
+    pattern:
+      /\b(?:dry|oily|sensitive)\b[^.!?\n]{0,24}\bskin\b|\bskin\b[^.!?\n]{0,24}\b(?:dry|oily|sensitive)\b|پوست (?:خشک|چرب|حساس)/i,
+    symptom: "dry skin",
+  },
 ];
 
 /** Any word that signals the sentence is about an allergy. */
@@ -280,13 +324,15 @@ function unique(values: string[]): string[] {
  * would re-inject a denied finding into every later turn through memory.
  */
 export function extractSymptoms(text: string): string[] {
-  return unique(
-    SYMPTOM_TERMS.filter((term) => {
-      if (!hasUnnegatedTerm(text, term)) return false;
-      if (isResolvedMention(text, term)) return false;
-      return true;
-    }),
-  );
+  const exact = SYMPTOM_TERMS.filter((term) => {
+    if (!hasUnnegatedTerm(text, term)) return false;
+    if (isResolvedMention(text, term)) return false;
+    return true;
+  });
+  const patterned = SYMPTOM_PATTERNS.filter((entry) =>
+    unnegatedPattern(entry.pattern, text),
+  ).map((entry) => entry.symptom);
+  return unique([...exact, ...patterned]);
 }
 
 function extractAge(text: string): number | null {

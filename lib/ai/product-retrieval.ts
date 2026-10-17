@@ -118,6 +118,16 @@ const SYMPTOM_QUERY_HINTS: Array<{ pattern: RegExp; queries: string[] }> = [
     pattern: /\b(?:headache|migraine)\b|سردرد|میگرن/i,
     queries: ["headache relief", "مسکن سردرد"],
   },
+  {
+    pattern:
+      /\b(?:dry|frizzy|damaged)\s+hair\b|\bsplit ends\b|\bhair (?:loss|fall)\b|\bdandruff\b|\bdry scalp\b|مو|شوره|موخوره|ریزش مو/i,
+    queries: ["hair mask", "conditioner", "ماسک مو"],
+  },
+  {
+    pattern:
+      /\b(?:dry|oily|sensitive)\s+skin\b|\bacne\b|\beczema\b|\bpsoriasis\b|\bdark spots\b|\bwrinkles\b|پوست|جوش|لک|چین و چروک/i,
+    queries: ["moisturizer", "sunscreen", "کرم مرطوب کننده"],
+  },
 ];
 
 function deriveQueriesFromSymptoms(facts: CaseFacts): string[] {

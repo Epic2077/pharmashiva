@@ -226,15 +226,31 @@ export async function interpretCase(params: {
     followUpQuestions: [],
   };
 
-  if (!isDeepSeekConfigured()) return fallback;
+  if (!isDeepSeekConfigured()) {
+    // No key in this environment (common on a fresh deployment): the
+    // deterministic facts still drive safety and retrieval.
+    console.warn(
+      "[interpret] DEEPSEEK_API_KEY is not set; using deterministic facts",
+    );
+    return fallback;
+  }
 
   try {
-    // Verified category vocabulary from Darukade's own navigation tree.
-    const vocab = categoryVocabulary(await getCategoryTree(), 60);
-    const vocabStr = JSON.stringify({
-      categories: vocab.categories.slice(0, 40),
-      ingredients: vocab.ingredients.slice(0, 30),
-    });
+    // Catalog vocabulary is only a wording hint for the prompt. Upstream
+    // Darukade can be cold/slow/unreachable in a fresh serverless environment;
+    // failing here must NEVER prevent the model from interpreting the case.
+    let vocabStr: string | null = null;
+    try {
+      const vocab = categoryVocabulary(await getCategoryTree(), 60);
+      vocabStr = JSON.stringify({
+        categories: vocab.categories.slice(0, 40),
+        ingredients: vocab.ingredients.slice(0, 30),
+      });
+    } catch {
+      console.warn(
+        "[interpret] category vocabulary unavailable; continuing without it",
+      );
+    }
     const raw = await jsonChatCompletion({
       messages: [
         { role: "system", content: INTERPRET_SYSTEM_PROMPT },
@@ -263,8 +279,15 @@ export async function interpretCase(params: {
       safetyConcerns: parseSafetyConcerns(raw),
       followUpQuestions: parseFollowUpQuestions(raw),
     };
-  } catch {
-    // Never let interpretation failure block safety or retrieval.
+  } catch (error) {
+    // Never let interpretation failure block safety or retrieval. The reason
+    // is logged as a code only (never message content) so a production
+    // difference is diagnosable.
+    const name =
+      error && typeof error === "object" && "name" in error
+        ? String((error as { name?: unknown }).name)
+        : "error";
+    console.warn(`[interpret] model interpretation unavailable (${name})`);
     return fallback;
   }
 }

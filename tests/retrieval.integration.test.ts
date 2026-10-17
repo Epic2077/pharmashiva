@@ -111,6 +111,45 @@ test("relevant candidates pass and keep a traceable reason", async () => {
   assert.ok(result.products[0].reason.includes("eye drops"));
 });
 
+test("a bare dry-hair message still searches for hair products", async () => {
+  const hairMask = makeProduct({
+    id: "hair-mask-1",
+    name: "Repair Hair Mask",
+    name_en: "Repair Hair Mask",
+    categories: [makeCategory("Hair care"), makeCategory("Hair mask")],
+    ingredients: [makeIngredient("Argan Oil")],
+    detailLoaded: true,
+  });
+  const searched: string[] = [];
+  const dependencies: RetrievalDependencies = {
+    search: async (query) => {
+      searched.push(query);
+      return {
+        hits: query === "hair mask" ? [{ product: hairMask, rank: 1 }] : [],
+      };
+    },
+    enrich: enrichPassthrough(),
+    localizeCategory: localizeIdentity(),
+  };
+
+  const facts = extractHeuristicFacts("my hair is very dry");
+  const result = await retrieveProducts({
+    facts,
+    message: "my hair is very dry",
+    language: "en",
+    provisional: false,
+    signal,
+    dependencies,
+  });
+
+  assert.equal(result.noQueryableIntent, false);
+  assert.ok(searched.includes("hair mask"));
+  assert.deepEqual(
+    result.products.map((item) => item.product.id),
+    ["hair-mask-1"],
+  );
+});
+
 test("a bare eye-symptom message still searches for eye products", async () => {
   const searched: string[] = [];
   const dependencies: RetrievalDependencies = {
