@@ -197,6 +197,7 @@ function applyEvent(chatId: string, messageId: string, event: ChatEvent) {
     case "status":
       patchMessage(chatId, messageId, {
         status: STAGE_LABEL[event.stage] || null,
+        stage: event.stage,
       });
       break;
     case "memory":
@@ -235,6 +236,7 @@ function applyEvent(chatId: string, messageId: string, event: ChatEvent) {
       patchMessage(chatId, messageId, {
         thinkingStreaming: false,
         status: null,
+        stage: null,
       });
       break;
   }
@@ -302,7 +304,7 @@ function finalizeTurn(chatId: string, assistantId: string) {
       })
       .map((message) =>
         message.id === assistantId
-          ? { ...message, thinkingStreaming: false, status: null }
+          ? { ...message, thinkingStreaming: false, status: null, stage: null }
           : message,
       ),
     streaming: false,

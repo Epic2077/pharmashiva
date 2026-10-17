@@ -14,6 +14,7 @@ import {
   productGateDecision,
 } from "../lib/safety/red-flags.ts";
 import { extractHeuristicFacts } from "../lib/ai/case-heuristics.ts";
+import type { CaseFacts } from "@/types/ai";
 import { makeFacts } from "./fixtures.ts";
 
 function assess(message: string, facts = extractHeuristicFacts(message)) {
@@ -120,14 +121,26 @@ test('"Recommend a supplement for my symptom." has no concrete symptom — insuf
   const assessment = assess("Recommend a supplement for my symptom.");
 
   assert.equal(assessment.level, "insufficient_information");
-  assert.equal(assessment.recommendationPermission, "restricted");
+  // The gate no longer withholds for a vague request; retrieval simply finds
+  // nothing to show. The assessment itself stays honest.
+  assert.equal(assessment.recommendationPermission, "allowed");
 });
 
 test("empty message yields insufficient_information, never routine", () => {
   const assessment = assessSafety(makeFacts(), "");
 
   assert.equal(assessment.level, "insufficient_information");
+  assert.equal(assessment.recommendationPermission, "allowed");
+});
+
+test("an engine failure still withholds products (restricted fallback)", () => {
+  // A malformed facts object makes the engine throw internally and fall back.
+  const broken = { ...makeFacts(), symptoms: null } as unknown as CaseFacts;
+  const assessment = assessSafety(broken, "x");
+
+  assert.equal(assessment.level, "insufficient_information");
   assert.equal(assessment.recommendationPermission, "restricted");
+  assert.equal(productGateDecision(assessment).allowed, false);
 });
 
 test("cardiac chest pain is emergency and blocked", () => {
@@ -219,11 +232,31 @@ test("allergy plus a concrete symptom request proceeds to filtered products", ()
   assert.equal(assessment.recommendationPermission, "allowed");
 });
 
-test("a bare symptom without shopping intent still asks questions", () => {
+test("a bare symptom keyword is actionable immediately, without a questions prompt", () => {
   const assessment = assess("I have acne.");
+
+  assert.equal(assessment.level, "routine");
+  assert.equal(assessment.recommendationPermission, "allowed");
+  assert.equal(assessment.followUpQuestions.length, 0);
+});
+
+test("short keyword symptoms stay routine so results are not delayed", () => {
+  for (const message of ["eye pain", "cough", "headache", "nausea"]) {
+    const assessment = assess(message);
+    assert.equal(assessment.level, "routine", message);
+    assert.equal(assessment.recommendationPermission, "allowed", message);
+    assert.equal(assessment.followUpQuestions.length, 0, message);
+  }
+});
+
+test("rule-driven cautions still ask their focused questions", () => {
+  // The eye protocol is a genuine, targeted safety check: it must keep its
+  // questions even though generic missing-detail questions are gone.
+  const assessment = assess("Ali's eyes are red.");
 
   assert.equal(assessment.level, "caution");
   assert.equal(assessment.recommendationPermission, "allowed");
+  assert.ok(assessment.followUpQuestions.length > 0);
 });
 
 test("medicine combination question is flagged as caution without red-flag keywords", () => {
@@ -270,5 +303,5 @@ test("negated severe pain does not escalate", () => {
   );
 
   assert.notEqual(assessment.level, "urgent");
-  assert.equal(assessment.level, "caution");
+  assert.equal(assessment.level, "routine");
 });

@@ -10,7 +10,7 @@
  *
  * The function is synchronous and performs no IO, so it can never time out or
  * fail silently: an unexpected internal error falls back to a conservative
- * "insufficient_information / restricted" assessment.
+ * "insufficient_information" assessment that withholds products.
  */
 
 import type {
@@ -66,29 +66,6 @@ function isVagueSymptomRequest(text: string, facts: CaseFacts): boolean {
   return !concreteClass.test(text);
 }
 
-function buildGenericQuestions(facts: CaseFacts): string[] {
-  const questions: string[] = [];
-  if (!facts.duration) questions.push("How long has this been going on?");
-  if (facts.symptoms.length > 0) {
-    questions.push("How severe is it, and is it getting better or worse?");
-  }
-  if (facts.age === null) questions.push("How old is the customer?");
-  if (facts.pregnancy === null && facts.age === null) {
-    questions.push("Is the customer pregnant or breastfeeding?");
-  }
-  if (facts.medications.length === 0) {
-    questions.push(
-      "Is the customer taking any other medicines, including OTC products and supplements?",
-    );
-  }
-  if (facts.allergies.length === 0) {
-    questions.push(
-      "Does the customer have any known allergies or ingredient sensitivities?",
-    );
-  }
-  return questions.slice(0, 5);
-}
-
 function severityForLevel(level: SafetyLevel): SafetySeverity {
   if (level === "emergency" || level === "urgent") return "critical";
   if (level === "routine") return "info";
@@ -102,11 +79,13 @@ function statusForLevel(level: SafetyLevel): SafetyStatus {
 }
 
 function permissionForLevel(level: SafetyLevel): RecommendationPermission {
+  // Only a genuine emergency or urgent red flag withholds product cards.
+  // Everything else — including a short or vague request that lands in
+  // insufficient_information — may show whatever the catalog can offer;
+  // caution results are flagged provisional by the pipeline. The engine-failure
+  // fallback is the one exception and pins "restricted" explicitly.
   if (level === "emergency" || level === "urgent") return "blocked";
-  // Caution shows suggestions (flagged provisional) so the pharmacist can
-  // work fast while the alert questions remain open.
-  if (level === "caution" || level === "routine") return "allowed";
-  return "restricted"; // insufficient_information
+  return "allowed";
 }
 
 /**
@@ -128,6 +107,9 @@ function safeFallbackAssessment(): SafetyAssessment {
     explanation:
       "The safety assessment could not be completed. Please review the case carefully before making any suggestion.",
     title: "Safety assessment unavailable",
+    // Even though insufficient_information normally allows products, a failed
+    // assessment must never widen the gate.
+    permission: "restricted",
   });
 }
 
@@ -140,6 +122,8 @@ interface AssessmentInput {
   nextSteps: string[];
   explanation: string;
   title: string;
+  /** Explicit permission override; only the engine-failure fallback uses it. */
+  permission?: RecommendationPermission;
 }
 
 function buildAssessment(input: AssessmentInput): SafetyAssessment {
@@ -157,7 +141,7 @@ function buildAssessment(input: AssessmentInput): SafetyAssessment {
     nextSteps: input.nextSteps,
     triggers: [...input.redFlags, ...input.caution].map((rule) => rule.id),
     level,
-    recommendationPermission: permissionForLevel(level),
+    recommendationPermission: input.permission ?? permissionForLevel(level),
     detectedRedFlags: input.redFlags.map((rule) => rule.id),
     reasons: input.reasons,
     followUpQuestions: input.followUpQuestions,
@@ -252,30 +236,15 @@ export function assessSafety(
       });
     }
 
-    if (isCustomerCase(facts) && !resolvedEyeRedness) {
-      const questions = buildGenericQuestions(facts);
-      // A concrete shopping request (the model mapped the case to product
-      // classes) is allowed to proceed to filtered recommendations; the
-      // generic missing-info questions only gate symptom cases that have no
-      // clear shopping intent yet.
-      const hasConcreteShoppingRequest =
-        facts.productQueries.length > 0 || SHOPPING_VOCAB.test(rawMessage);
-      if (questions.length > 0 && !hasConcreteShoppingRequest) {
-        return buildAssessment({
-          level: "caution",
-          redFlags: [],
-          caution: [],
-          reasons: [
-            "Important safety information is still missing before a safe suggestion can be made.",
-          ],
-          followUpQuestions: questions,
-          nextSteps: [],
-          explanation:
-            "No urgent red flag was identified from what has been shared so far, but important information is missing before a safe suggestion can be made.",
-          title: "More information needed",
-        });
-      }
-    }
+    // A named, concrete symptom (e.g. "eye pain", "cough", "headache") is
+    // actionable on its own. Previously this branch downgraded any such case
+    // to a "More information needed" caution with up to five generic
+    // questions, which told pharmacists to explain instead of showing them
+    // results. Pharmacists work in keywords and expect red-flag screening plus
+    // product suggestions immediately, so we no longer gate on missing
+    // age/duration/medication details here. Targeted, rule-driven cautions
+    // (eye protocol, medicine interactions) are handled above and still ask
+    // their focused questions; the red-flag rules above are unchanged.
 
     // No symptom or shopping goal we can act on: we cannot determine a safe
     // next step from the available information.
@@ -632,7 +601,7 @@ const GATE_REASONS: Record<
   restricted: {
     code: "safety_restricted",
     reason:
-      "Product suggestions are withheld until the safety questions above are answered.",
+      "Product suggestions are withheld because the safety assessment could not be completed.",
   },
   allowed: {
     code: "safety_allowed",
@@ -642,8 +611,9 @@ const GATE_REASONS: Record<
 };
 
 /**
- * Turn an assessment into the hard product-card decision. Only an explicit
- * `allowed` permission may pass; anything else suppresses the cards.
+ * Turn an assessment into the hard product-card decision. Only a `blocked`
+ * assessment (emergency/urgent) withholds the cards; everything else may show
+ * product suggestions after relevance and allergy filtering.
  */
 export function productGateDecision(
   assessment: SafetyAssessment,

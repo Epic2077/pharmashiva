@@ -33,10 +33,10 @@ export interface EmissionInput {
 }
 
 /**
- * Plan the `products` event payload. Only an emergency/urgent (blocked) or
- * insufficient-information (restricted) assessment suppresses the cards;
- * caution-level cases show their suggestions flagged `provisional` so the
- * pharmacist can work fast while the alert questions remain open.
+ * Plan the `products` event payload. Only an emergency/urgent (blocked)
+ * assessment suppresses the cards; a caution-level case shows its suggestions
+ * flagged `provisional`, and every other level passes the retrieved products
+ * through so the pharmacist always gets results fast.
  */
 export function planProductEmission(input: EmissionInput): ProductEmission {
   const gate = productGateDecision(input.safety);

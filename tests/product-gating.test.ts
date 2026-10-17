@@ -93,6 +93,24 @@ test("routine assessment passes the cards through", () => {
   assert.equal(emission.gateReason, null);
 });
 
+test("an insufficient-information request still shows retrieved cards", () => {
+  const safety = assessSafety(
+    extractHeuristicFacts("Recommend a supplement for my symptom."),
+    "Recommend a supplement for my symptom.",
+  );
+  const emission = planProductEmission({
+    safety,
+    products: someProducts,
+    databaseAvailable: true,
+    queries: [],
+    intent: "general",
+  });
+
+  assert.equal(emission.suppressed, false);
+  assert.equal(emission.products.length, 2);
+  assert.equal(emission.provisional, true);
+});
+
 test("the gate never widens a blocked assessment, whatever else happens", () => {
   const emergency = assessSafety(
     extractHeuristicFacts("chest pain and can't breathe"),

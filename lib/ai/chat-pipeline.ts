@@ -267,8 +267,8 @@ export async function runChatPipeline({
   if (earlyRetrieval) recordDecisions(earlyRetrieval);
 
   if (!gate.allowed) {
-    // Blocked or restricted: no product card may reach the client, no matter
-    // what retrieval returned.
+    // Blocked (emergency/urgent) or restricted (failed assessment): no product
+    // card may reach the client, no matter what retrieval returned.
     products = [];
   } else {
     // The model's product queries drive a refined AI search. Without them we

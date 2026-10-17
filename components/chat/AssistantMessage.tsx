@@ -9,6 +9,7 @@ import { TypingIndicator } from "./TypingIndicator";
 import ThinkingBlock from "./ThinkingBlock";
 import { SafetyAlert } from "./SafetyAlert";
 import { ChatProductList } from "./ChatProductList";
+import { ProductSearchLoading } from "./ProductSearchLoading";
 
 interface AssistantMessageProps {
   message: Message;
@@ -24,6 +25,20 @@ export function AssistantMessage({
   const isEmpty = message.content.length === 0;
   const hasThinking = Boolean(message.thinking && message.thinking.length > 0);
   const showThinking = hasThinking || Boolean(message.thinkingStreaming);
+
+  // While the answer is still being prepared, show what the pipeline is doing
+  // so a slow catalog lookup never looks like a frozen screen. Catalog work
+  // starts alongside interpretation (an early search) and continues into the
+  // explicit "retrieving" stage, so the product skeleton stays until the
+  // products event actually arrives.
+  const showProgress = isEmpty && isStreaming && !message.error;
+  const stage = message.stage ?? null;
+  const searchingProducts =
+    showProgress &&
+    !message.products &&
+    (stage === "interpreting" ||
+      stage === "assessing" ||
+      stage === "retrieving");
 
   // Client-side enforcement: even if a stale or malformed event carried
   // product cards, a safety assessment that does not allow recommendations
@@ -53,16 +68,20 @@ export function AssistantMessage({
           />
         ) : null}
 
-        {/* Immediate "thinking" state until the first tokens arrive. */}
-        {isEmpty && isStreaming && !showThinking ? (
+        {/* Stage progress: shows what the pipeline is doing (e.g. searching
+            the catalog) so a slow step never looks stuck. */}
+        {showProgress ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <TypingIndicator />
-            {message.status ? <span>{message.status}</span> : null}
+            <span>{message.status ?? "Working…"}</span>
           </div>
         ) : null}
 
         {/* The authoritative safety result, independent of the answer text. */}
         {message.safety ? <SafetyAlert safety={message.safety} /> : null}
+
+        {/* Product-search skeleton, in the exact spot the cards will render. */}
+        {searchingProducts ? <ProductSearchLoading /> : null}
 
         {/* Database-backed product cards, using the existing product component. */}
         {message.products ? (

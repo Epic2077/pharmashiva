@@ -61,10 +61,11 @@ test("an urgent concern raises routine to urgent/blocked and leads the alert", (
   assert.ok(escalated.nextSteps.length > 0);
 });
 
-test("urgent concern on a caution base leads with the flag and clears generic questions", () => {
+test("urgent concern on a caution base leads with the flag and clears follow-up questions", () => {
+  // The eye protocol is a rule-driven caution that keeps focused questions.
   const cautionBase = assessSafety(
-    makeFacts({ symptoms: ["headache"] }),
-    "I have a headache.",
+    extractHeuristicFacts("Ali's eyes are red."),
+    "Ali's eyes are red.",
   );
   assert.ok(cautionBase.followUpQuestions.length > 0);
 

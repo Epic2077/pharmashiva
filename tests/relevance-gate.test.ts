@@ -95,6 +95,58 @@ test("unrelated products are rejected for other symptoms too (generic gate)", ()
   assert.equal(verdict.code, "intended_use_mismatch");
 });
 
+/* ── Short keyword inputs against the Persian catalog ─────────── */
+
+test("'cough' maps to the respiratory domain", () => {
+  const facts = makeFacts({ symptoms: ["cough"] });
+  assert.deepEqual(symptomDomains(facts), ["respiratory"]);
+});
+
+test("a Persian-named cough product passes for the keyword 'cough'", () => {
+  const facts = makeFacts({ symptoms: ["cough"], searchTerms: ["cough"] });
+  const coughSyrup = makeProduct({
+    id: "cough-1",
+    name: "شربت ضد سرفه نوسکاف",
+    categories: [
+      makeCategory("مکمل غذایی"),
+      makeCategory("سرماخوردگی و سرفه"),
+    ],
+    detailLoaded: true,
+  });
+  const verdict = evaluateCandidateRelevance({
+    product: coughSyrup,
+    queryTokens: meaningfulQueryTokens(["cough"]),
+    domains: symptomDomains(facts),
+    intent: "medical_symptom",
+  });
+
+  assert.equal(verdict.pass, true);
+  assert.ok(verdict.matchedTokens.length === 0); // justified by domain, not words
+});
+
+test("a Persian-named migraine product passes for the keyword 'headache'", () => {
+  const facts = makeFacts({ symptoms: ["headache"], searchTerms: ["headache"] });
+  const migraineRoll = makeProduct({
+    id: "migraine-1",
+    name: "رول موضعی سر و گردن کنورت ام",
+    categories: [makeCategory("مکمل غذایی"), makeCategory("میگرن")],
+    detailLoaded: true,
+  });
+  const verdict = evaluateCandidateRelevance({
+    product: migraineRoll,
+    queryTokens: meaningfulQueryTokens(["headache"]),
+    domains: symptomDomains(facts),
+    intent: "medical_symptom",
+  });
+
+  assert.equal(verdict.pass, true);
+});
+
+test("'eye pain' stays in the eye domain and never becomes a pain case", () => {
+  const facts = makeFacts({ symptoms: ["eye pain"] });
+  assert.deepEqual(symptomDomains(facts), ["eye"]);
+});
+
 test("a dark-spot beauty request must not return supplements (scope_mismatch)", () => {
   const facts = makeFacts({
     goal: "I want a product for dark spots.",

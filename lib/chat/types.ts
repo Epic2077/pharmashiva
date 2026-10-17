@@ -1,5 +1,6 @@
 import type {
   CaseMemory,
+  ChatStage,
   ProductRecommendation,
   SafetyAssessment,
 } from "@/types/ai";
@@ -22,6 +23,8 @@ export interface Message {
   thinkingStreaming?: boolean;
   /** Short label for the current pipeline stage, cleared when done. */
   status?: string | null;
+  /** Raw pipeline stage, used to drive stage-specific loading UI. */
+  stage?: ChatStage | null;
   /** Authoritative safety result for this turn. */
   safety?: SafetyAssessment;
   /** Database-backed product cards. */

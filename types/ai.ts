@@ -33,11 +33,12 @@ export type SafetyLevel =
 /**
  * Whether product cards may be returned for the current case. This is a hard
  * backend gate — the language model can never widen it.
- *  - blocked: no routine product recommendations (emergency/urgent).
+ *  - blocked: no routine product recommendations (emergency/urgent only).
  *  - allowed: product cards may be shown — routine cases normally, caution
- *    cases as provisional suggestions while the alert questions remain open.
- *  - restricted: recommendations withheld because a safe next step cannot
- *    be determined (insufficient_information).
+ *    cases as provisional suggestions, and short/vague requests surface
+ *    whatever the catalog can offer.
+ *  - restricted: recommendations withheld because the safety assessment could
+ *    not be completed (engine-failure fallback only).
  */
 export type RecommendationPermission = "blocked" | "restricted" | "allowed";
 
