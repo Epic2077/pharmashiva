@@ -12,7 +12,7 @@
 -- client roles.
 
 alter table public.chat_messages
-  add column if not exists references jsonb;
+  add column if not exists "references" jsonb;
 
 create table if not exists public.medical_reference_cache (
   id uuid primary key default gen_random_uuid(),
@@ -25,7 +25,7 @@ create table if not exists public.medical_reference_cache (
   canonical_url text not null default '',
   -- Selected normalized fields or the raw source payload (per source terms).
   payload jsonb,
-  language text,
+  "language" text,
   retrieved_at timestamptz not null default now(),
   source_updated_at timestamptz,
   expires_at timestamptz,
