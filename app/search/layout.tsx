@@ -1,11 +1,5 @@
-import NavMenu from "@/components/shared/nav-menu/NavMenu";
+import AppShell from "@/components/shared/AppShell";
 
-export default function SearchLayout({ children }: LayoutProps<"/home">) {
-  return (
-    <div className="flex h-dvh min-w-screen flex-col px-5 py-1">
-      <NavMenu variant="desktop" />
-      <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
-      <NavMenu />
-    </div>
-  );
+export default function SearchLayout({ children }: LayoutProps<"/search">) {
+  return <AppShell wide>{children}</AppShell>;
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { motion } from "motion/react";
+import { ExternalLink } from "lucide-react";
 import type { Message } from "@/lib/chat/types";
 import { MarkdownRenderer } from "@/components/markdown/MarkdownRenderer";
 import Logo from "@/components/shared/Logo";
@@ -114,6 +115,39 @@ export function AssistantMessage({
               <span className="ml-0.5 inline-block h-[1em] w-0.5 animate-pulse bg-current align-middle" />
             ) : null}
           </>
+        ) : null}
+
+        {message.references && message.references.length > 0 ? (
+          <section className="mt-3 rounded-2xl border border-border bg-card p-3">
+            <h4 className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+              <ExternalLink className="size-3.5" />
+              Sources
+            </h4>
+            <ol className="space-y-1.5">
+              {message.references.map((reference, index) => (
+                <li
+                  key={`${reference.source}:${reference.externalId}`}
+                  className="text-xs leading-5"
+                >
+                  <span className="font-medium text-foreground">
+                    [{index + 1}]
+                  </span>{" "}
+                  <a
+                    href={reference.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary hover:underline"
+                  >
+                    {reference.title}
+                  </a>
+                  <span className="text-muted-foreground">
+                    {" "}
+                    — {reference.sourceLabel}
+                  </span>
+                </li>
+              ))}
+            </ol>
+          </section>
         ) : null}
 
         {message.error ? (

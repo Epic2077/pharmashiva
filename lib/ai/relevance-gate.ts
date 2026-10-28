@@ -571,6 +571,24 @@ export function evaluateCandidateRelevance(
   );
   const hasOverlap = matchedTokens.length > 0;
 
+  // A name/brand match is a supporting signal only: it can lift a product that
+  // already carries verified category/ingredient data, but a bare name match
+  // with no such data is never sufficient on its own.
+  const hasKnownIntendedUse =
+    product.categories.length > 0 || product.ingredients.length > 0;
+  const nameTokens = tokeniseParts([
+    product.name,
+    product.name_en ?? "",
+    product.name_fa ?? "",
+    product.brand ?? "",
+    product.brand_fa ?? "",
+  ]);
+  const nameMatched =
+    hasKnownIntendedUse &&
+    queryTokens.some((queryToken) =>
+      nameTokens.some((productToken) => tokenOverlap(queryToken, productToken)),
+    );
+
   // For symptom shopping, a verified domain match also counts: an eye product
   // is plausibly relevant to an eye symptom even when the query words differ.
   const domainMatched =
@@ -579,9 +597,6 @@ export function evaluateCandidateRelevance(
     domains.some((domain) =>
       DOMAINS[domain].some((term) => verifiedTokens.includes(term)),
     );
-
-  const hasKnownIntendedUse =
-    product.categories.length > 0 || product.ingredients.length > 0;
 
   const fail = (
     code: RelevanceDecisionCode,
@@ -594,7 +609,7 @@ export function evaluateCandidateRelevance(
     matchedTokens,
   });
 
-  if (hasOverlap || domainMatched) {
+  if (hasOverlap || domainMatched || nameMatched) {
     // Scope separation: a product valid for one shopping intent may be
     // irrelevant for another, even when words overlap.
     if (intent === "beauty" || intent === "supplement") {
@@ -613,7 +628,9 @@ export function evaluateCandidateRelevance(
       reason:
         domainMatched && !hasOverlap
           ? `Relevant by symptom domain (${domains.join(", ")}).`
-          : `Matches query terms: ${matchedTokens.join(", ")}.`,
+          : hasOverlap
+            ? `Matches query terms: ${matchedTokens.join(", ")}.`
+            : "Matches product name/brand; verified category present.",
       matchedTokens,
     };
   }

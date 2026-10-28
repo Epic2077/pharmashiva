@@ -1,3 +1,4 @@
+import AppShell from "@/components/shared/AppShell";
 import HistoryFilters from "@/components/history/HistoryFilters";
 import HistoryHeader from "@/components/history/HistoryHeader";
 import HistorySection, {
@@ -30,10 +31,12 @@ export default async function HistoryPage() {
   }
 
   return (
-    <div className="flex flex-col gap-8">
-      <HistoryHeader />
-      <HistoryFilters />
-      <HistorySection entries={entries} />
-    </div>
+    <AppShell>
+      <div className="flex flex-col gap-8">
+        <HistoryHeader />
+        <HistoryFilters />
+        <HistorySection entries={entries} />
+      </div>
+    </AppShell>
   );
 }

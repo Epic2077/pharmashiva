@@ -304,7 +304,7 @@ export function assessSafety(
         followUpQuestions: followUps,
         nextSteps: [],
         explanation:
-          "No urgent warning sign was identified, but this symptom needs more information (or pharmacist assessment) before any product can be suggested.",
+          "No urgent warning sign was identified, but this symptom needs more information before any product can be suggested.",
         title: "More information needed",
         findings,
       });
@@ -339,7 +339,7 @@ export function assessSafety(
         ],
         followUpQuestions: [],
         nextSteps: [
-          "Ask the pharmacist to describe the customer's concern or what kind of product they are looking for.",
+          "Describe the customer's concern or what kind of product you are looking for.",
         ],
         explanation:
           "There is not enough information to determine what is being asked or what would be safe to suggest.",

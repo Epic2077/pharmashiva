@@ -23,6 +23,7 @@ export default function NavigationButton({
       href={item.href}
       className={cn(
         "group flex items-center justify-between gap-4 rounded-2xl p-5 transition-all motion-reduce:transition-none",
+        featured && "sm:col-span-2",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
         "active:scale-[0.99]",
         featured

@@ -15,17 +15,26 @@ export interface ProductListItem {
 interface ProductCardListProps {
   items: ProductListItem[];
   language: LanguageCode;
+  /** Show as a two-column grid on desktop (listing pages). */
+  columns?: 1 | 2;
 }
 
 export default function ProductCardList({
   items,
   language,
+  columns = 1,
 }: ProductCardListProps) {
   const [preview, setPreview] = useState<ProductListItem | null>(null);
 
   return (
     <>
-      <div className="flex flex-col gap-3">
+      <div
+        className={
+          columns === 2
+            ? "grid gap-3 lg:grid-cols-2"
+            : "flex flex-col gap-3"
+        }
+      >
         {items.map((item) => (
           <ProductCard
             key={item.product.id}

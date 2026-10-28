@@ -11,6 +11,7 @@ import type {
   ProductRecommendation,
   SafetyAssessment,
 } from "@/types/ai";
+import type { MedicalReference } from "@/lib/medical-reference/types";
 import { getSupabaseClient } from "@/lib/supabase/server";
 import { coerceMemory } from "@/lib/chat/memory";
 import { coerceSafetyAssessment } from "@/lib/safety/red-flags";
@@ -44,13 +45,14 @@ interface MessageRow {
   thinking: string | null;
   safety: unknown;
   products: unknown;
+  references: unknown;
   created_at: string;
 }
 
 const CHAT_COLUMNS =
   "id, title, icon, status, model, memory, created_at, updated_at";
 const MESSAGE_COLUMNS =
-  "id, role, content, thinking, safety, products, created_at";
+  "id, role, content, thinking, safety, products, references, created_at";
 
 function coerceStatus(value: string | null): ChatStatus {
   return value === "in_progress" || value === "closed" ? value : "open";
@@ -81,6 +83,7 @@ function mapMessage(row: MessageRow): ChatMessageDto {
     thinking: row.thinking ?? null,
     safety: coerceSafetyAssessment(row.safety),
     products: (row.products ?? null) as ProductRecommendation[] | null,
+    references: (row.references ?? null) as MedicalReference[] | null,
     createdAt: row.created_at,
   };
 }
@@ -174,6 +177,7 @@ export interface AppendMessageInput {
   model?: ChatModel | null;
   safety?: SafetyAssessment | null;
   products?: ProductRecommendation[] | null;
+  references?: MedicalReference[] | null;
 }
 
 /**
@@ -197,6 +201,7 @@ export async function appendChatMessage(
       thinking: message.thinking ?? null,
       safety: message.safety ?? null,
       products: message.products ?? null,
+      references: message.references ?? null,
     })
     .select(MESSAGE_COLUMNS)
     .single();

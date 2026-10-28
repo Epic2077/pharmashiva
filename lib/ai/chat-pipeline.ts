@@ -49,6 +49,8 @@ import { planProductEmission } from "./product-gating";
 import { planSafetyEvent, shouldSendInstantSafety } from "./safety-events";
 import { coerceMemory, mergeMemory, memoryToFacts } from "@/lib/chat/memory";
 import type { CaseFacts, CaseMemory } from "@/types/ai";
+import { searchMedicalReferences } from "@/lib/medical-reference";
+import type { MedicalReference } from "@/lib/medical-reference/types";
 
 export interface ChatPipelineParams {
   message: string;
@@ -90,6 +92,40 @@ function mergeProducts(
     if (out.length >= limit) break;
   }
   return out;
+}
+
+/**
+ * Pick a bounded query for the Medical Reference search. Symptom search terms
+ * are preferred; a definition-style question uses the message itself.
+ */
+function buildMedicalQuery(message: string, facts: CaseFacts): string | null {
+  const terms = facts.searchTerms.filter(Boolean);
+  if (terms.length > 0) return terms.slice(0, 2).join(" ").slice(0, 200);
+  if (/what is|what are|\bdefine\b|\bmeaning\b|چیست|یعنی|تعریف/i.test(message)) {
+    return message.trim().slice(0, 200);
+  }
+  if (facts.symptoms.length > 0) {
+    return facts.symptoms.slice(0, 2).join(" ").slice(0, 200);
+  }
+  return null;
+}
+
+/**
+ * Retrieve medical references with a hard time budget. Never throws, never
+ * blocks safety or product cards, and returns [] on any failure or timeout.
+ */
+async function retrieveMedicalReferencesBounded(
+  query: string,
+): Promise<MedicalReference[]> {
+  try {
+    const result = await Promise.race([
+      searchMedicalReferences({ query, filter: "all", limit: 6 }),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 4000)),
+    ]);
+    return result ? result.results.slice(0, 5) : [];
+  } catch {
+    return [];
+  }
 }
 
 /** Emit a block of text as small streamed chunks (used for fallbacks only). */
@@ -273,6 +309,13 @@ export async function runChatPipeline({
   await onMemory?.(updatedMemory);
   mark("memory");
 
+  // Medical reference retrieval runs in parallel with product retrieval. It is
+  // bounded (4s) and never blocks the safety alert or the product cards.
+  const medicalQuery = buildMedicalQuery(message, caseFacts);
+  const medicalRefsPromise = medicalQuery
+    ? retrieveMedicalReferencesBounded(medicalQuery)
+    : Promise.resolve<MedicalReference[]>([]);
+
   // ── Step 4: retrieval — product cards are never safety-gated ──
   stage("retrieving");
   let products: ProductRecommendation[] = earlyRetrieval?.products ?? [];
@@ -280,6 +323,7 @@ export async function runChatPipeline({
   let retrievalQueries = earlyRetrieval?.queries ?? [];
   let retrievalScope: ShoppingIntent = earlyRetrieval?.scope ?? "general";
   let missingIngredientData = earlyRetrieval?.missingIngredientData ?? false;
+  let retrievalOutcome = earlyRetrieval?.outcome ?? null;
   const excluded: PipelineDiagnostics["retrieval"]["excluded"] = [];
 
   const recordDecisions = (result: ProductRetrievalResult) => {
@@ -288,6 +332,7 @@ export async function runChatPipeline({
       : retrievalQueries;
     retrievalScope = result.scope;
     missingIngredientData = result.missingIngredientData;
+    retrievalOutcome = result.outcome;
     for (const verdict of result.decisions) {
       if (!verdict.pass && verdict.code) {
         excluded.push({ productId: verdict.productId, code: verdict.code });
@@ -356,6 +401,12 @@ export async function runChatPipeline({
   });
   mark("database");
 
+  // Emit source-backed medical references for this turn (may be empty).
+  const medicalReferences = await medicalRefsPromise;
+  if (medicalReferences.length > 0) {
+    send({ type: "references", references: medicalReferences });
+  }
+
   // ── Step 5: stream the explanation ────────────────────────────
   stage("composing");
 
@@ -383,6 +434,7 @@ export async function runChatPipeline({
           safety,
           products,
           displayPolicy: emission.displayPolicy,
+          references: medicalReferences,
         }),
       },
     ];
@@ -457,6 +509,7 @@ export async function runChatPipeline({
         excluded,
         missingIngredientData,
         displayPolicy: emission.displayPolicy,
+        outcome: retrievalOutcome,
       },
       timings: reportTimings,
     },

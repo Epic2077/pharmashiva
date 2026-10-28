@@ -74,7 +74,7 @@ export default async function SearchResults({
           No products found.
         </p>
       ) : (
-        <ProductCardList items={items} language={language} />
+        <ProductCardList items={items} language={language} columns={2} />
       )}
     </div>
   );

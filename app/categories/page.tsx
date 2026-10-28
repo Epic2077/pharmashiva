@@ -45,15 +45,17 @@ export default async function CategoriesPage() {
               : "No categories are available from Darukade right now."}
           </p>
         ) : (
-          items.map((item) => (
-            <CategoriesCard
-              key={item.id}
-              icon={<Pill className="size-5" />}
-              title={item.title}
-              count={item.count}
-              href={`/categories/${item.id}`}
-            />
-          ))
+          <div className="grid gap-3 sm:grid-cols-2">
+            {items.map((item) => (
+              <CategoriesCard
+                key={item.id}
+                icon={<Pill className="size-5" />}
+                title={item.title}
+                count={item.count}
+                href={`/categories/${item.id}`}
+              />
+            ))}
+          </div>
         )}
       </section>
     </div>

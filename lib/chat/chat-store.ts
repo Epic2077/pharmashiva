@@ -134,6 +134,7 @@ function toMessage(dto: ChatMessageDto): Message {
     status: null,
     safety: coerceSafetyAssessment(dto.safety) ?? undefined,
     products: dto.products ?? undefined,
+    references: dto.references ?? undefined,
     persisted: true,
   };
 }
@@ -158,6 +159,7 @@ async function persistMessage(
         thinking: message.thinking ?? null,
         safety: message.safety ?? null,
         products: message.products ?? null,
+        references: message.references ?? null,
         status: extra.status,
         model: extra.model,
       }),
@@ -224,6 +226,9 @@ function applyEvent(chatId: string, messageId: string, event: ChatEvent) {
         productsGateReason: event.gateReason,
         productsDisplayPolicy: event.displayPolicy,
       });
+      break;
+    case "references":
+      patchMessage(chatId, messageId, { references: event.references });
       break;
     case "text":
       patchMessageFn(chatId, messageId, (message) => ({

@@ -96,7 +96,7 @@ export default async function CategoryPage({
             No products found in this category.
           </p>
         ) : (
-          <ProductCardList items={items} language={language} />
+          <ProductCardList items={items} language={language} columns={2} />
         )}
       </section>
     </div>

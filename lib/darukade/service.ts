@@ -12,7 +12,7 @@
  */
 
 import { DarukadeClient, type ListingQuery } from "./client";
-import { sleep } from "./http";
+import { fetchDarukade, sleep } from "./http";
 import type { ListingPage } from "./normalize";
 import type {
   NormalizedProductDetail,
@@ -503,6 +503,106 @@ export async function searchDarukadeAi(
 ): Promise<ProductSearchHit[]> {
   // AI-specific weighting lives in product-retrieval; here the same pipeline runs.
   return searchDarukade(query, limit);
+}
+
+/* ── Search suggestions (autocomplete) ──────────────────────────── */
+
+export interface SuggestionProduct {
+  id: number;
+  name: string;
+  brand: string | null;
+  image: string | null;
+  /** Site-relative product URL from the source, used to open the detail page. */
+  url: string;
+}
+
+export interface SuggestionEntry {
+  title: string;
+  url: string;
+  icon: string | null;
+  /** "brand" for `/brands/…`, "group" for `/products/…` category pages. */
+  kind: "brand" | "group" | "other";
+}
+
+export interface SearchSuggestions {
+  products: SuggestionProduct[];
+  entries: SuggestionEntry[];
+}
+
+const EMPTY_SUGGESTIONS: SearchSuggestions = { products: [], entries: [] };
+
+function suggestionText(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+/**
+ * Autocomplete suggestions from Darukade's `/api/search/suggestions` endpoint.
+ * Best-effort: any failure (network, parse, unexpected shape) returns an empty
+ * result rather than blocking the search input.
+ */
+export async function getSearchSuggestions(
+  query: string,
+): Promise<SearchSuggestions> {
+  const trimmed = query.trim();
+  if (!trimmed) return EMPTY_SUGGESTIONS;
+
+  try {
+    const response = await fetchDarukade(
+      `/api/search/suggestions?w=${encodeURIComponent(trimmed)}`,
+      { accept: "application/json, */*", timeoutMs: 5_000, retries: 1 },
+    );
+    const data = JSON.parse(response.text) as Record<string, unknown>;
+    const payload = (data.resault ?? data.result ?? {}) as Record<
+      string,
+      unknown
+    >;
+
+    const rawProducts = Array.isArray(payload.products) ? payload.products : [];
+    const products: SuggestionProduct[] = [];
+    for (const item of rawProducts) {
+      if (!item || typeof item !== "object") continue;
+      const record = item as Record<string, unknown>;
+      const id = typeof record.id === "number" ? record.id : Number(record.id);
+      if (!Number.isFinite(id)) continue;
+      const name = suggestionText(record.faName);
+      if (!name) continue;
+      products.push({
+        id,
+        name,
+        brand: suggestionText(record.brandEnName) || null,
+        image: suggestionText(record.image) || null,
+        url: suggestionText(record.productURL),
+      });
+      if (products.length >= 8) break;
+    }
+
+    const rawEntries = Array.isArray(payload.landingPage)
+      ? payload.landingPage
+      : [];
+    const entries: SuggestionEntry[] = [];
+    for (const item of rawEntries) {
+      if (!item || typeof item !== "object") continue;
+      const record = item as Record<string, unknown>;
+      const title = suggestionText(record.title);
+      if (!title) continue;
+      const url = suggestionText(record.url);
+      entries.push({
+        title,
+        url,
+        icon: suggestionText(record.icon) || null,
+        kind: url.startsWith("/brands")
+          ? "brand"
+          : url.startsWith("/products")
+            ? "group"
+            : "other",
+      });
+      if (entries.length >= 8) break;
+    }
+
+    return { products, entries };
+  } catch {
+    return EMPTY_SUGGESTIONS;
+  }
 }
 
 /* ── Ingredient search ──────────────────────────────────────────── */

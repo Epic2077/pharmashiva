@@ -125,7 +125,7 @@ test("a bare dry-hair message still searches for hair products", async () => {
     search: async (query) => {
       searched.push(query);
       return {
-        hits: query === "hair mask" ? [{ product: hairMask, rank: 1 }] : [],
+        hits: query === "dry hair" ? [{ product: hairMask, rank: 1 }] : [],
       };
     },
     enrich: enrichPassthrough(),
@@ -143,7 +143,7 @@ test("a bare dry-hair message still searches for hair products", async () => {
   });
 
   assert.equal(result.noQueryableIntent, false);
-  assert.ok(searched.includes("hair mask"));
+  assert.ok(searched.includes("dry hair"), JSON.stringify(searched));
   assert.deepEqual(
     result.products.map((item) => item.product.id),
     ["hair-mask-1"],
@@ -157,7 +157,7 @@ test("a bare eye-symptom message still searches for eye products", async () => {
       searched.push(query);
       return {
         hits:
-          query === "eye drops"
+          query === "eye pain"
             ? [{ product: lubricantEyeDrops(), rank: 1 }]
             : [],
       };
@@ -178,8 +178,8 @@ test("a bare eye-symptom message still searches for eye products", async () => {
 
   assert.equal(result.noQueryableIntent, false);
   assert.ok(
-    searched.includes("eye drops"),
-    `expected an eye-drop query, got ${JSON.stringify(searched)}`,
+    searched.includes("eye pain"),
+    `expected an eye-pain query, got ${JSON.stringify(searched)}`,
   );
   assert.deepEqual(
     result.products.map((item) => item.product.id),

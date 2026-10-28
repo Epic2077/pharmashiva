@@ -41,6 +41,11 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
+      // The inline theme script (below) adds/removes the `dark` class on
+      // <html> before hydration, so the server HTML and the hydrated DOM can
+      // legitimately differ on `className`. Suppress the warning for this
+      // element only — the mismatch is intentional and self-correcting.
+      suppressHydrationWarning
       className={`${roboto.variable} ${manrope.variable} ${vazirmatn.variable} h-full antialiased roboto`}
     >
       <body className="min-h-full flex flex-col scrollbar-thumb-transparent">

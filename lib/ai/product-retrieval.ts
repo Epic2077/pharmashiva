@@ -23,6 +23,7 @@ import type {
   ProductCompatibility,
   ProductRecommendation,
   RelevanceVerdict,
+  RetrievalOutcomeSummary,
   ShoppingIntent,
 } from "@/types/ai";
 import type { ProductDetails } from "@/types/database";
@@ -33,6 +34,7 @@ import {
   meaningfulQueryTokens,
   symptomDomains,
 } from "./relevance-gate.ts";
+import { classifyProductKind } from "./product-classification";
 
 const MAX_QUERIES = 3;
 const PER_QUERY_LIMIT = 8;
@@ -79,6 +81,8 @@ const defaultDependencies: Required<RetrievalDependencies> = {
   localizeProductName: async () => null,
 };
 
+export type RetrievalOutcome = RetrievalOutcomeSummary;
+
 export interface ProductRetrievalResult {
   products: ProductRecommendation[];
   /** False when every catalog query failed (database unreachable). */
@@ -93,6 +97,8 @@ export interface ProductRetrievalResult {
   missingIngredientData: boolean;
   /** True when no queryable intent existed, so nothing was searched. */
   noQueryableIntent: boolean;
+  /** Structured outcome summary for diagnostics. */
+  outcome: RetrievalOutcome;
 }
 
 /** Ingredient names we can compare an allergen against for a product. */
@@ -107,51 +113,6 @@ function ingredientNames(product: ProductDetails): string[] {
   );
 }
 
-/**
- * Deterministic symptom → product-class hints for the model-free path.
- *
- * This does not invent a product: it only names the same product class a
- * pharmacist would search for (e.g. "eye drops" for eye pain). It exists
- * because a bare keyword message ("eyes hurting") used to produce no query at
- * all, so the catalog was never even asked.
- */
-const SYMPTOM_QUERY_HINTS: Array<{ pattern: RegExp; queries: string[] }> = [
-  {
-    pattern: /\b(?:eye|eyes|ocular)\b|چشم|بینایی|قرمزی|سوزش|خارش/i,
-    queries: ["eye drops", "artificial tears", "قطره چشم"],
-  },
-  {
-    pattern: /\b(?:cough|sore throat|flu)\b|سرفه|گلودرد|سرماخوردگی/i,
-    queries: ["cough syrup", "شربت سرفه"],
-  },
-  {
-    pattern: /\b(?:headache|migraine)\b|سردرد|میگرن/i,
-    queries: ["headache relief", "مسکن سردرد"],
-  },
-  {
-    pattern:
-      /\b(?:dry|frizzy|damaged)\s+hair\b|\bsplit ends\b|\bhair (?:loss|fall)\b|\bdandruff\b|\bdry scalp\b|مو|شوره|موخوره|ریزش مو/i,
-    queries: ["hair mask", "conditioner", "ماسک مو"],
-  },
-  {
-    pattern:
-      /\b(?:dry|oily|sensitive)\s+skin\b|\bacne\b|\beczema\b|\bpsoriasis\b|\bdark spots\b|\bwrinkles\b|پوست|جوش|لک|چین و چروک/i,
-    queries: ["moisturizer", "sunscreen", "کرم مرطوب کننده"],
-  },
-];
-
-function deriveQueriesFromSymptoms(facts: CaseFacts): string[] {
-  const text = [...facts.symptoms, facts.goal ?? "", facts.category ?? ""]
-    .join(" ")
-    .toLowerCase();
-  const out: string[] = [];
-  for (const hint of SYMPTOM_QUERY_HINTS) {
-    if (!hint.pattern.test(text)) continue;
-    out.push(...hint.queries);
-  }
-  return out;
-}
-
 function buildQueries(facts: CaseFacts): string[] {
   // When the model produced product queries they are the *only* thing we search
   // with: they are short product-class / ingredient / category phrases, whereas
@@ -161,11 +122,7 @@ function buildQueries(facts: CaseFacts): string[] {
   const primary =
     facts.productQueries.length > 0
       ? [...facts.productQueries]
-      : [
-          ...deriveQueriesFromSymptoms(facts),
-          ...facts.searchTerms,
-          facts.category ?? "",
-        ];
+      : [...facts.searchTerms, facts.category ?? ""];
   // Last-resort fallback: when neither product queries nor search terms exist,
   // search with the raw symptom wording so a bare symptom still reaches the
   // catalog instead of returning nothing.
@@ -296,6 +253,15 @@ export async function retrieveProducts(params: {
       decisions: [],
       missingIngredientData: false,
       noQueryableIntent: true,
+      outcome: {
+        searched: false,
+        candidatesFound: 0,
+        rejectedRelevance: 0,
+        rejectedSafety: 0,
+        rejectedNotSupplement: 0,
+        failedQueries: 0,
+        kept: 0,
+      },
     };
   }
 
@@ -311,6 +277,9 @@ export async function retrieveProducts(params: {
   const databaseAvailable = settled.some(
     (result) => result.status === "fulfilled",
   );
+  const failedQueries = settled.filter(
+    (result) => result.status === "rejected",
+  ).length;
 
   // Merge hits by product id, keeping the best (highest) rank.
   const byId = new Map<string, { product: ProductDetails; rank: number }>();
@@ -354,6 +323,12 @@ export async function retrieveProducts(params: {
   }> = [];
   const decisions: RelevanceVerdict[] = [];
   let missingIngredientData = false;
+  let rejectedRelevance = 0;
+  let rejectedSafety = 0;
+  let rejectedNotSupplement = 0;
+
+  const supplementOnly =
+    intent === "medical_symptom" || intent === "supplement";
 
   for (const { product: summaryProduct, rank } of merged) {
     const product = enrichedById.get(summaryProduct.id) ?? summaryProduct;
@@ -364,6 +339,7 @@ export async function retrieveProducts(params: {
       ingredientMatchesAllergen(allergen, names),
     );
     if (containsAllergen) {
+      rejectedSafety += 1;
       decisions.push({
         productId: product.id,
         pass: false,
@@ -383,7 +359,27 @@ export async function retrieveProducts(params: {
       intent,
     });
     decisions.push(verdict);
-    if (!verdict.pass) continue;
+    if (!verdict.pass) {
+      rejectedRelevance += 1;
+      continue;
+    }
+
+    // Supplement-only rule: the recommendation cards must contain supplements
+    // only. Medicines and cosmetics are excluded server-side, never by the AI.
+    if (supplementOnly) {
+      const kind = classifyProductKind(product);
+      if (kind === "medicine" || kind === "cosmetic") {
+        rejectedNotSupplement += 1;
+        decisions.push({
+          productId: product.id,
+          pass: false,
+          code: "not_a_supplement",
+          reason: `Product is classified as ${kind}; only supplements are recommended.`,
+          matchedTokens: verdict.matchedTokens,
+        });
+        continue;
+      }
+    }
 
     const notes = candidateSafetyNotes(
       product,
@@ -461,6 +457,15 @@ export async function retrieveProducts(params: {
     decisions,
     missingIngredientData,
     noQueryableIntent: false,
+    outcome: {
+      searched: true,
+      candidatesFound: merged.length,
+      rejectedRelevance,
+      rejectedSafety,
+      rejectedNotSupplement,
+      failedQueries,
+      kept: products.length,
+    },
   };
 }
 

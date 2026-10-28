@@ -1,4 +1,4 @@
-import { History, MessageCircle, Package, Settings } from "lucide-react";
+import { BookOpen, History, MessageCircle, Package, Settings } from "lucide-react";
 import NavigationButton from "./NavigationButton";
 
 export default function HomeNavigation() {
@@ -18,6 +18,13 @@ export default function HomeNavigation() {
       icon: <History className="size-6" />,
     },
     {
+      id: "medical-reference",
+      name: "Medical Reference",
+      sub: "Evidence-backed medical information",
+      href: "/reference",
+      icon: <BookOpen className="size-6" />,
+    },
+    {
       id: "product-search",
       name: "Product Search",
       sub: "Search supplements directly",
@@ -34,7 +41,7 @@ export default function HomeNavigation() {
   ];
 
   return (
-    <div className="grid gap-4">
+    <div className="grid gap-4 sm:grid-cols-2">
       {nav.map((item) => (
         <NavigationButton key={item.id} item={item} />
       ))}

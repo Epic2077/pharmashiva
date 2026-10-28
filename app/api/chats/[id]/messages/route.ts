@@ -4,6 +4,7 @@ import type { ChatModel, ChatStatus } from "@/lib/chat/types";
 import { appendChatMessage } from "@/lib/chats/db";
 import { jsonError, readJson, requireUser, sameOrigin } from "@/lib/api/guard";
 import type { ProductRecommendation, SafetyAssessment } from "@/types/ai";
+import type { MedicalReference } from "@/lib/medical-reference/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -43,6 +44,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
   const products = Array.isArray(body.products)
     ? (body.products.slice(0, MAX_PRODUCTS) as ProductRecommendation[])
     : null;
+  const references = Array.isArray(body.references)
+    ? (body.references.slice(0, 12) as MedicalReference[])
+    : null;
 
   const status: ChatStatus | null =
     role === "assistant"
@@ -54,7 +58,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     body.model === "pro" ? "pro" : body.model === "flash" ? "flash" : null;
 
   // A message must actually carry something to be worth storing.
-  if (!content.trim() && !safety && !products?.length) {
+  if (!content.trim() && !safety && !products?.length && !references?.length) {
     return jsonError("Nothing to save", 400);
   }
 
@@ -67,6 +71,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       model,
       safety,
       products,
+      references,
     });
     if (!message) return jsonError("Chat not found", 404);
     return Response.json({ message }, { status: 201 });

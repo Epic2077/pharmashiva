@@ -5,6 +5,7 @@ import type {
   ProductRecommendation,
   SafetyAssessment,
 } from "@/types/ai";
+import type { MedicalReference } from "@/lib/medical-reference/types";
 
 export type MessageRole = "user" | "assistant";
 
@@ -42,6 +43,8 @@ export interface Message {
   productsGateReason?: string;
   /** How the backend decided these results should be presented. */
   productsDisplayPolicy?: ProductDisplayPolicy;
+  /** Source-backed medical references retrieved for this turn (links only). */
+  references?: MedicalReference[];
   /** Fatal error for this turn. */
   error?: string | null;
   /** Set once the message has been written to Supabase. */
@@ -84,6 +87,7 @@ export interface ChatMessageDto {
   thinking: string | null;
   safety: SafetyAssessment | null;
   products: ProductRecommendation[] | null;
+  references: MedicalReference[] | null;
   createdAt: string;
 }
 

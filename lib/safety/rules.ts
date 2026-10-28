@@ -9,8 +9,8 @@
  * Levels:
  *   emergency — potentially life- or vision-threatening; act immediately.
  *   urgent    — needs prompt professional assessment.
- *   caution   — advisory gates: more information or pharmacist assessment is
- *               needed before a product may be considered.
+ *   caution   — advisory gates: more information is needed before a product
+ *               may be considered.
  *
  * ⚠ CLINICAL REVIEW: this criteria table was written from common triage
  * guidance and must be reviewed and signed off by a qualified clinician

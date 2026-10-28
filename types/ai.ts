@@ -8,6 +8,7 @@
  */
 
 import type { ProductDetails } from "./database";
+import type { MedicalReference } from "@/lib/medical-reference/types";
 
 /* ── Safety ─────────────────────────────────────────────────── */
 
@@ -18,8 +19,8 @@ export type SafetySeverity = "critical" | "warning" | "info";
  * Structured severity of a case, from the deterministic ruleset.
  *  - emergency: potentially life- or vision-threatening — act immediately.
  *  - urgent: needs prompt professional assessment.
- *  - caution: more information or pharmacist assessment is needed before any
- *    product can be considered.
+ *  - caution: more information is needed before any product can be
+ *    considered.
  *  - routine: no red flag identified from the available information.
  *  - insufficient_information: a safe next step cannot be determined yet.
  */
@@ -236,7 +237,30 @@ export type RelevanceDecisionCode =
   | "scope_mismatch"
   | "insufficient_product_data"
   | "allergy_conflict"
-  | "no_queryable_intent";
+  | "no_queryable_intent"
+  | "not_a_supplement";
+
+/**
+ * Machine-readable summary of one retrieval run, so diagnostics can tell apart
+ * "no candidates found", "found but irrelevant", "rejected for safety", and
+ * "available but filtered out".
+ */
+export interface RetrievalOutcomeSummary {
+  /** True when at least one catalog query was attempted. */
+  searched: boolean;
+  /** Distinct candidates returned by the catalog before filtering. */
+  candidatesFound: number;
+  /** Candidates rejected by the relevance gate. */
+  rejectedRelevance: number;
+  /** Candidates rejected by the hard allergy constraint. */
+  rejectedSafety: number;
+  /** Candidates rejected because they are not supplements. */
+  rejectedNotSupplement: number;
+  /** Catalog queries that failed (network/parse). */
+  failedQueries: number;
+  /** Candidates that survived every filter. */
+  kept: number;
+}
 
 /** Per-candidate relevance decision produced by the deterministic gate. */
 export interface RelevanceVerdict {
@@ -295,6 +319,7 @@ export type ChatEvent =
       displayPolicy?: ProductDisplayPolicy;
     }
   | { type: "text"; delta: string }
+  | { type: "references"; references: MedicalReference[] }
   | { type: "error"; message: string }
   | { type: "done"; timings?: Record<string, number> };
 
@@ -337,6 +362,8 @@ export interface PipelineDiagnostics {
     missingIngredientData: boolean;
     /** Why the final product presentation was chosen. */
     displayPolicy: ProductDisplayPolicy;
+    /** Structured retrieval outcome (searched/candidates/rejections). */
+    outcome?: RetrievalOutcomeSummary | null;
   };
   timings: PipelineTimings;
 }
