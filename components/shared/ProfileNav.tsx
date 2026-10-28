@@ -91,6 +91,7 @@ export default function ProfileNav({
           <form action={logoutAction}>
             <DropdownMenuItem
               render={<button type="submit" className="w-full" />}
+              nativeButton
               variant="destructive"
               className="flex items-center gap-2 text-base"
             >

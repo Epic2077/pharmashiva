@@ -1,3 +1,4 @@
+import { AuthShell } from "@/components/auth/auth-shell";
 import { LoginForm } from "@/components/auth/login-form";
 
 /** Messages for redirects that come back with an `error` code. */
@@ -17,13 +18,15 @@ export default async function Login({
   const errorCode = typeof params.error === "string" ? params.error : undefined;
 
   return (
-    <LoginForm
-      next={next}
-      initialError={
-        errorCode
-          ? (ERROR_MESSAGES[errorCode] ?? "Sign-in failed. Please try again.")
-          : undefined
-      }
-    />
+    <AuthShell>
+      <LoginForm
+        next={next}
+        initialError={
+          errorCode
+            ? (ERROR_MESSAGES[errorCode] ?? "Sign-in failed. Please try again.")
+            : undefined
+        }
+      />
+    </AuthShell>
   );
 }

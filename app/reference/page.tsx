@@ -25,7 +25,7 @@ export default async function ReferencePage({
     <Suspense
       fallback={<div className="h-12 w-full animate-pulse rounded-2xl bg-muted" />}
     >
-      <ReferenceSearchBar initialQuery={query} />
+      <ReferenceSearchBar initialQuery={query} language={language} />
     </Suspense>
   );
 
