@@ -210,6 +210,11 @@ export async function jsonChatCompletion({
       response_format: { type: "json_object" },
       thinking: { type: "disabled" },
       reasoning_effort: "none",
+      // Case interpretation is an extraction task, not creative writing. A
+      // deterministic temperature keeps the model's `productQueries` stable
+      // across turns, so "red eye" reliably maps to eye drops instead of
+      // flipping between queries between requests.
+      temperature: 0,
     }),
     signal: requestSignal(signal, AI_TIMEOUTS.interpretMs),
   });
