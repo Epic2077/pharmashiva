@@ -68,7 +68,9 @@ test("an irrelevant catalog result is rejected, never forced in to fill a sectio
     dependencies,
   });
 
-  assert.equal(searched, 1);
+  // Query expansion (AI query + deterministic eye-form variants) is bounded;
+  // the exact count is not what matters — the irrelevant hit must be rejected.
+  assert.ok(searched >= 1, `expected at least one query, got ${searched}`);
   assert.equal(result.databaseAvailable, true);
   // The dark-spot serum is irrelevant to red eyes. It must not be shown as a
   // "broad match"; an honest empty state is required instead.
@@ -150,16 +152,13 @@ test("a bare dry-hair message still searches for hair products", async () => {
   );
 });
 
-test("a bare eye-symptom message still searches for eye products", async () => {
+test("a bare eye-symptom message deterministically expands to eye-drop queries", async () => {
   const searched: string[] = [];
   const dependencies: RetrievalDependencies = {
     search: async (query) => {
       searched.push(query);
       return {
-        hits:
-          query === "eye pain"
-            ? [{ product: lubricantEyeDrops(), rank: 1 }]
-            : [],
+        hits: query === "قطره چشم" ? [{ product: lubricantEyeDrops(), rank: 1 }] : [],
       };
     },
     enrich: enrichPassthrough(),
@@ -177,9 +176,12 @@ test("a bare eye-symptom message still searches for eye products", async () => {
   });
 
   assert.equal(result.noQueryableIntent, false);
+  // Even with no AI product queries, the eye symptom deterministically
+  // searches the catalog-oriented eye-drop form ("قطره چشم"), not just the
+  // English symptom wording that a Persian catalog would not match.
   assert.ok(
-    searched.includes("eye pain"),
-    `expected an eye-pain query, got ${JSON.stringify(searched)}`,
+    searched.includes("قطره چشم"),
+    `expected an eye-drop query, got ${JSON.stringify(searched)}`,
   );
   assert.deepEqual(
     result.products.map((item) => item.product.id),
@@ -550,5 +552,118 @@ test("OTC medicines pass for symptom shopping; cosmetics are still excluded", as
         verdict.code === "cosmetic_excluded",
     ),
     "cosmetic exclusion must still be recorded machine-readably",
+  );
+});
+
+test("'red eye' suggests eye drops alongside an eye supplement", async () => {
+  // OTC medicine eye drop (lives under /products/, so it classifies as medicine
+  // rather than supplement or cosmetic).
+  const eyeDrops = makeProduct({
+    id: "eye-drops-otc",
+    name: "قطره چشمی",
+    name_en: "Lubricating Eye Drops",
+    canonical_url: "https://darukade.com/products/eye-drops-123",
+    categories: [makeCategory("قطره چشمی"), makeCategory("Eye drops")],
+    ingredients: [makeIngredient("Hypromellose")],
+    detailLoaded: true,
+  });
+  // Vimexir-style eye supplement (under /supplement-).
+  const eyeSupplement = makeProduct({
+    id: "eye-supplement-1",
+    name: "Vimexir Eye Supplement",
+    name_en: "Vimexir Eye Supplement",
+    canonical_url: "https://darukade.com/supplement-vimexir-eye",
+    categories: [makeCategory("مکمل چشم"), makeCategory("Eye supplement")],
+    ingredients: [makeIngredient("Lutein")],
+    detailLoaded: true,
+  });
+
+  const facts = makeFacts({
+    symptoms: ["red eye"],
+    productQueries: ["قطره چشم"],
+  });
+  const dependencies: RetrievalDependencies = {
+    search: searchReturning([
+      { product: eyeDrops, rank: 0.9 },
+      { product: eyeSupplement, rank: 0.8 },
+    ]),
+    enrich: enrichPassthrough(),
+    localizeCategory: localizeIdentity(),
+  };
+
+  const result = await retrieveProducts({
+    facts,
+    message: "red eye",
+    language: "en",
+    provisional: false,
+    signal,
+    dependencies,
+  });
+
+  const ids = result.products.map((item) => item.product.id);
+  assert.ok(
+    ids.includes("eye-drops-otc"),
+    `eye drops (OTC medicine) must be suggested for red eye, got ${JSON.stringify(ids)}`,
+  );
+  assert.ok(
+    ids.includes("eye-supplement-1"),
+    "the eye supplement must also be suggested for red eye",
+  );
+});
+
+test("eye drops outrank an eye supplement for 'red eye'", async () => {
+  const eyeDrops = makeProduct({
+    id: "eye-drops-otc",
+    name: "قطره چشمی",
+    name_en: "Lubricating Eye Drops",
+    canonical_url: "https://darukade.com/products/eye-drops-123",
+    categories: [makeCategory("قطره چشمی"), makeCategory("Eye drops")],
+    ingredients: [makeIngredient("Hypromellose")],
+    detailLoaded: true,
+  });
+  const eyeSupplement = makeProduct({
+    id: "eye-supplement-1",
+    name: "Vimexir Eye Supplement",
+    name_en: "Vimexir Eye Supplement",
+    canonical_url: "https://darukade.com/supplement-vimexir-eye",
+    categories: [makeCategory("مکمل چشم"), makeCategory("Eye supplement")],
+    ingredients: [makeIngredient("Lutein")],
+    detailLoaded: true,
+  });
+  const facts = makeFacts({
+    symptoms: ["red eye"],
+    productQueries: ["قطره چشم"],
+  });
+  const dependencies: RetrievalDependencies = {
+    search: searchReturning([
+      { product: eyeSupplement, rank: 0.8 },
+      { product: eyeDrops, rank: 0.9 },
+    ]),
+    enrich: enrichPassthrough(),
+    localizeCategory: localizeIdentity(),
+  };
+
+  const result = await retrieveProducts({
+    facts,
+    message: "red eye",
+    language: "en",
+    provisional: false,
+    signal,
+    dependencies,
+  });
+
+  const ids = result.products.map((item) => item.product.id);
+  assert.equal(ids[0], "eye-drops-otc", `eye drops must rank first, got ${JSON.stringify(ids)}`);
+  const supplement = result.products.find(
+    (item) => item.product.id === "eye-supplement-1",
+  );
+  assert.ok(supplement, "the supplement may still be suggested as a candidate");
+  assert.ok(
+    supplement.reason.includes("not a confirmed treatment"),
+    `supplement must not be framed as a direct treatment, got "${supplement.reason}"`,
+  );
+  assert.ok(
+    result.products[0].score > supplement.score,
+    "eye drops must score higher than the supplement",
   );
 });

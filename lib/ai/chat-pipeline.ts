@@ -46,6 +46,7 @@ import {
   type ProductRetrievalResult,
 } from "./product-retrieval";
 import { planProductEmission } from "./product-gating";
+import { poolProductRecommendations } from "./product-pool";
 import { planSafetyEvent, shouldSendInstantSafety } from "./safety-events";
 import { coerceMemory, mergeMemory, memoryToFacts } from "@/lib/chat/memory";
 import type { CaseFacts, CaseMemory } from "@/types/ai";
@@ -75,23 +76,6 @@ function isAbortError(error: unknown): boolean {
     "name" in error &&
     (error as { name?: string }).name === "AbortError"
   );
-}
-
-/** Merge two ranked product lists, deduping by product id. */
-function mergeProducts(
-  primary: ProductRecommendation[],
-  secondary: ProductRecommendation[],
-  limit: number,
-): ProductRecommendation[] {
-  const seen = new Set<string>();
-  const out: ProductRecommendation[] = [];
-  for (const item of [...primary, ...secondary]) {
-    if (seen.has(item.product.id)) continue;
-    seen.add(item.product.id);
-    out.push(item);
-    if (out.length >= limit) break;
-  }
-  return out;
 }
 
 /**
@@ -273,6 +257,11 @@ export async function runChatPipeline({
     category: facts.category,
     missingInformation: facts.missingInformation,
     inferredFacts: facts.inferredFacts,
+    // Current-turn search intent must come from this turn's interpretation,
+    // never from the accumulated query history in memory (which is context,
+    // not intent). `searchTerms` stays the accumulated symptom history as a
+    // deterministic fallback when the model produced no product queries.
+    productQueries: facts.productQueries,
   };
 
   // Allergy-only caution concerns do not gate: the deterministic ingredient
@@ -318,6 +307,7 @@ export async function runChatPipeline({
 
   // ── Step 4: retrieval — product cards are never safety-gated ──
   stage("retrieving");
+  const retrievalStartedAt = Date.now();
   let products: ProductRecommendation[] = earlyRetrieval?.products ?? [];
   let databaseAvailable = earlyRetrieval?.databaseAvailable ?? true;
   let retrievalQueries = earlyRetrieval?.queries ?? [];
@@ -325,6 +315,11 @@ export async function runChatPipeline({
   let missingIngredientData = earlyRetrieval?.missingIngredientData ?? false;
   let retrievalOutcome = earlyRetrieval?.outcome ?? null;
   const excluded: PipelineDiagnostics["retrieval"]["excluded"] = [];
+  const earlyCandidateCount = earlyRetrieval?.outcome?.candidatesFound ?? 0;
+  let refinedCandidateCount = 0;
+  let refinedProductIds: string[] = [];
+  let passCount = 0;
+  let rejectCount = 0;
 
   const recordDecisions = (result: ProductRetrievalResult) => {
     retrievalQueries = result.queries.length
@@ -334,8 +329,14 @@ export async function runChatPipeline({
     missingIngredientData = result.missingIngredientData;
     retrievalOutcome = result.outcome;
     for (const verdict of result.decisions) {
+      if (verdict.pass) passCount += 1;
+      else rejectCount += 1;
       if (!verdict.pass && verdict.code) {
-        excluded.push({ productId: verdict.productId, code: verdict.code });
+        excluded.push({
+          productId: verdict.productId,
+          code: verdict.code,
+          matchLevel: verdict.matchLevel ?? null,
+        });
       }
     }
   };
@@ -358,15 +359,16 @@ export async function runChatPipeline({
       },
     });
     recordDecisions(refined);
-    // If AI suggestions found products, use them as the primary result.
-    if (hasAiQueries && refined.products.length > 0) {
-      products = refined.products;
-      databaseAvailable = refined.databaseAvailable;
-    } else {
-      products = mergeProducts(refined.products, products, 6);
-      databaseAvailable = databaseAvailable && refined.databaseAvailable;
-    }
+    refinedCandidateCount = refined.outcome?.candidatesFound ?? 0;
+    refinedProductIds = refined.products.map((item) => item.product.id);
+    // Candidate pooling, not replacement: refined (AI) hits and early
+    // (symptom-driven) hits are combined by product id and re-ranked, so a
+    // weak AI query can never discard a stronger early candidate.
+    products = poolProductRecommendations(products, refined.products, 6);
+    databaseAvailable = databaseAvailable && refined.databaseAvailable;
   }
+
+  const retrievalLatencyMs = Date.now() - retrievalStartedAt;
 
   // Anything below `routine` is flagged provisional so the UI nudges the
   // pharmacist to read the safety alert — the cards still show.
@@ -510,6 +512,31 @@ export async function runChatPipeline({
         missingIngredientData,
         displayPolicy: emission.displayPolicy,
         outcome: retrievalOutcome,
+        queryCount: retrievalQueries.length,
+        earlyCandidates: earlyCandidateCount,
+        refinedCandidates: refinedCandidateCount,
+        mergedCandidates: new Set([
+          ...(earlyRetrieval?.products ?? []).map((item) => item.product.id),
+          ...refinedProductIds,
+        ]).size,
+        passCount,
+        rejectCount,
+        topCandidates: products.slice(0, 3).map((item) => ({
+          id: item.product.id,
+          score: item.score,
+          reason: item.reason,
+        })),
+        finalProductIds: products.map((item) => item.product.id),
+        noProductsReason:
+          products.length === 0
+            ? databaseAvailable
+              ? excluded.length > 0
+                ? `no_candidates_passed: ${excluded.length} rejected`
+                : "no_candidates_found"
+              : "catalog_unavailable"
+            : null,
+        partialFailure: (retrievalOutcome?.failedQueries ?? 0) > 0,
+        retrievalLatencyMs,
       },
       timings: reportTimings,
     },

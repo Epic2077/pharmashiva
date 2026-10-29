@@ -17,6 +17,7 @@
 import type {
   CaseFacts,
   RelevanceDecisionCode,
+  RelevanceMatchLevel,
   RelevanceVerdict,
   ShoppingIntent,
 } from "@/types/ai";
@@ -262,6 +263,39 @@ for (const terms of Object.values(DOMAINS)) {
   for (const term of terms) DOMAIN_TERM_SET.add(term);
 }
 
+/* ── Product form/class vocabulary ─────────────────────────────── */
+
+/**
+ * Product form tokens (English + Persian). A query token matching one of these
+ * on a product's verified category/ingredient data is a *direct* match — it
+ * names what the product actually is (drops, syrup, tablet, …), unlike a
+ * body-area token ("eye", "چشم") which only says the product targets the same
+ * area.
+ */
+const FORM_TOKENS = new Set([
+  "drops", "drop", "syrup", "tablet", "tablets", "capsule", "capsules",
+  "spray", "gel", "cream", "ointment", "ointments", "shampoo", "lotion",
+  "serum", "powder", "solution", "injection", "ampoule", "ampoules",
+  "lozenge", "lozenges", "pill", "pills", "effervescent", "sachet", "balm",
+  "suppository", "nasal", "topical", "oral",
+  "قطره", "شربت", "قرص", "کپسول", "اسپری", "ژل", "کرم", "پماد", "شامپو",
+  "لوسیون", "سرم", "پودر", "محلول", "آمپول", "شیاف", "روغن",
+]);
+
+/** Supplement/class tokens — a direct match too, since an explicit
+ *  "supplement"/"vitamin" request legitimately points at a supplement. */
+const SUPPLEMENT_CLASS_TOKENS = new Set([
+  "supplement", "supplements", "vitamin", "vitamins", "multivitamin",
+  "mineral", "minerals", "protein", "omega",
+  "مکمل", "ویتامین", "مولتی ویتامین", "پروتئین", "امگا",
+]);
+
+/** Tokens whose presence in a query→product overlap makes the match "direct". */
+const SPECIFIC_MATCH_TOKENS = new Set<string>([
+  ...FORM_TOKENS,
+  ...SUPPLEMENT_CLASS_TOKENS,
+]);
+
 /** Symptoms that map a case into a domain (whole-word, lower-cased). */
 const SYMPTOM_TO_DOMAIN: Array<{ terms: string[]; domain: DomainName }> = [
   {
@@ -368,6 +402,41 @@ const SYMPTOM_TO_DOMAIN: Array<{ terms: string[]; domain: DomainName }> = [
     domain: "fever",
   },
 ];
+
+/**
+ * Deterministic, catalog-oriented query variants per symptom domain.
+ *
+ * Used by retrieval as *bounded search expansion*: a symptom must reach the
+ * right product FORM (drops/syrup/cream/…) even when the model's
+ * `productQueries` are missing, weak, or wrong. These are product-form/class
+ * phrases in the catalog's language — never diagnoses, never a claim that the
+ * product treats the symptom. The relevance gate still judges every candidate,
+ * so these only widen the candidate pool; they do not bypass relevance/safety.
+ */
+export const DOMAIN_PRODUCT_QUERIES: Partial<Record<DomainName, string[]>> = {
+  eye: ["قطره چشم", "اشک مصنوعی"],
+  respiratory: ["شربت سرفه"],
+  hair: ["شامپو ضد خشکی"],
+  skin: ["کرم مرطوب"],
+  pain: ["مسکن"],
+  digestive: ["ضد نفخ"],
+  fever: ["شربت تب بر"],
+};
+
+/** Flatten the deterministic query variants for the given domains (deduped). */
+export function deterministicQueryVariants(domains: DomainName[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const domain of domains) {
+    for (const query of DOMAIN_PRODUCT_QUERIES[domain] ?? []) {
+      const key = query.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(query);
+    }
+  }
+  return out;
+}
 
 const BEAUTY_SCOPE_TERMS = [
   ...DOMAINS.skin,
@@ -492,6 +561,34 @@ function verifiedProductTokens(product: ProductDetails): string[] {
   ]);
 }
 
+/** Verified ingredient tokens only (no categories), for direct-match checks. */
+function verifiedIngredientTokens(product: ProductDetails): string[] {
+  return tokeniseParts(
+    product.ingredients.flatMap((ingredient) =>
+      [
+        ingredient.name,
+        ingredient.name_en,
+        ingredient.name_fa,
+        ingredient.raw_name,
+      ].filter((value): value is string => Boolean(value)),
+    ),
+  );
+}
+
+/**
+ * True when the product's verified category/ingredient/form data carries a
+ * treatment FORM token (drops, syrup, tablet, …). Used by ranking so a direct
+ * treatment form outranks a supplement for symptom shopping.
+ */
+export function hasTreatmentFormToken(product: ProductDetails): boolean {
+  const verified = verifiedProductTokens(product);
+  const form = normalizeIngredient(product.form ?? "").trim();
+  return (
+    verified.some((token) => FORM_TOKENS.has(token)) ||
+    (form.length > 0 && FORM_TOKENS.has(form))
+  );
+}
+
 /** All searchable tokens, including name/brand — used only for scope hints. */
 function productTokens(product: ProductDetails): string[] {
   return tokeniseParts([
@@ -563,6 +660,7 @@ export function evaluateCandidateRelevance(
   // Relevance must be justified by verified category/ingredient data. Product
   // names and keyword similarity alone are never evidence of intended use.
   const verifiedTokens = verifiedProductTokens(product);
+  const ingredientTokens = verifiedIngredientTokens(product);
 
   const matchedTokens = queryTokens.filter((queryToken) =>
     verifiedTokens.some((productToken) =>
@@ -570,6 +668,17 @@ export function evaluateCandidateRelevance(
     ),
   );
   const hasOverlap = matchedTokens.length > 0;
+
+  // A match is "direct" only when it names the product's form/class (drops,
+  // syrup, tablet, supplement, …) or a verified ingredient. A bare body-area
+  // token ("eye", "چشم") establishes that the product targets the same area but
+  // is not evidence that it treats the symptom — so it stays a weaker domain
+  // match. This is what keeps an eye supplement from masquerading as a direct
+  // red-eye treatment just because both mention the eye.
+  const hasDirectMatch = matchedTokens.some(
+    (token) =>
+      SPECIFIC_MATCH_TOKENS.has(token) || ingredientTokens.includes(token),
+  );
 
   // A name/brand match is a supporting signal only: it can lift a product that
   // already carries verified category/ingredient data, but a bare name match
@@ -598,6 +707,14 @@ export function evaluateCandidateRelevance(
       DOMAINS[domain].some((term) => verifiedTokens.includes(term)),
     );
 
+  const matchLevel: RelevanceMatchLevel = hasDirectMatch
+    ? "direct"
+    : hasOverlap || domainMatched
+      ? "domain"
+      : nameMatched
+        ? "name"
+        : null;
+
   const fail = (
     code: RelevanceDecisionCode,
     reason: string,
@@ -607,9 +724,10 @@ export function evaluateCandidateRelevance(
     code,
     reason,
     matchedTokens,
+    matchLevel,
   });
 
-  if (hasOverlap || domainMatched || nameMatched) {
+  if (matchLevel) {
     // Scope separation: a product valid for one shopping intent may be
     // irrelevant for another, even when words overlap.
     if (intent === "beauty" || intent === "supplement") {
@@ -621,17 +739,19 @@ export function evaluateCandidateRelevance(
         );
       }
     }
+    const reason =
+      matchLevel === "direct"
+        ? `Matches query form/class or ingredient: ${matchedTokens.join(", ")}.`
+        : matchLevel === "domain"
+          ? `Relevant by symptom domain (${domains.join(", ")}); category identity only — effectiveness not established.`
+          : "Matches product name/brand; verified category present.";
     return {
       productId: product.id,
       pass: true,
       code: null,
-      reason:
-        domainMatched && !hasOverlap
-          ? `Relevant by symptom domain (${domains.join(", ")}).`
-          : hasOverlap
-            ? `Matches query terms: ${matchedTokens.join(", ")}.`
-            : "Matches product name/brand; verified category present.",
+      reason,
       matchedTokens,
+      matchLevel,
     };
   }
 
@@ -679,6 +799,7 @@ export function filterCandidatesByRelevance(
         code: "no_queryable_intent" as RelevanceDecisionCode,
         reason: "No queryable intent: no product query or symptom domain.",
         matchedTokens: [],
+        matchLevel: null,
       })),
     };
   }

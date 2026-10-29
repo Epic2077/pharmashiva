@@ -22,6 +22,7 @@ import {
   lubricantEyeDrops,
   makeCategory,
   makeFacts,
+  makeIngredient,
   makeProduct,
 } from "./fixtures.ts";
 
@@ -272,4 +273,37 @@ test("sentence noise is never a usable query", () => {
   // And even if a sentence-like string is forced in, only "eyes" survives.
   const tokens = meaningfulQueryTokens(["ali's eyes are red"]);
   assert.deepEqual(tokens, ["eyes"]);
+});
+
+test("an eye supplement is a domain match, not a direct red-eye treatment", () => {
+  const eyeSupplement = makeProduct({
+    id: "eye-supp-1",
+    name: "Vimexir Eye Supplement",
+    name_en: "Vimexir Eye Supplement",
+    canonical_url: "https://darukade.com/supplement-vimexir-eye",
+    categories: [makeCategory("مکمل چشم"), makeCategory("Eye supplement")],
+    ingredients: [makeIngredient("Lutein")],
+    detailLoaded: true,
+  });
+  const verdict = evaluateCandidateRelevance({
+    product: eyeSupplement,
+    queryTokens: meaningfulQueryTokens(["eye drops"]),
+    domains: symptomDomains(eyeFacts),
+    intent: "medical_symptom",
+  });
+
+  assert.equal(verdict.pass, true, "an eye supplement may still be suggested");
+  assert.equal(verdict.matchLevel, "domain", "identity, not effectiveness");
+});
+
+test("an eye-drop product is a direct match for the eye-drops query", () => {
+  const verdict = evaluateCandidateRelevance({
+    product: lubricantEyeDrops(),
+    queryTokens: meaningfulQueryTokens(["eye drops"]),
+    domains: symptomDomains(eyeFacts),
+    intent: "medical_symptom",
+  });
+
+  assert.equal(verdict.pass, true);
+  assert.equal(verdict.matchLevel, "direct");
 });

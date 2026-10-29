@@ -238,7 +238,23 @@ export type RelevanceDecisionCode =
   | "insufficient_product_data"
   | "allergy_conflict"
   | "no_queryable_intent"
-  | "cosmetic_excluded";
+  | "cosmetic_excluded"
+  | "category_mismatch"
+  | "ingredient_mismatch"
+  | "unsupported_intended_use"
+  | "out_of_scope"
+  | "safety_exclusion";
+
+/**
+ * Strongest evidence tier that justified a relevance decision. Kept separate
+ * from the pass/fail verdict so ranking can reward a direct form/ingredient
+ * match over a mere body-area (domain) match.
+ *  - "direct": a product form/class or ingredient token matched the query.
+ *  - "domain": only the symptom's body-area domain matched (e.g. an eye
+ *    supplement for an eye symptom) — identity, not evidence of effectiveness.
+ *  - "name":  only the product title/brand matched; verified category present.
+ */
+export type RelevanceMatchLevel = "direct" | "domain" | "name" | null;
 
 /**
  * Machine-readable summary of one retrieval run, so diagnostics can tell apart
@@ -260,6 +276,10 @@ export interface RetrievalOutcomeSummary {
   failedQueries: number;
   /** Candidates that survived every filter. */
   kept: number;
+  /** Candidates rejected because they fall outside the configured scope. */
+  rejectedScope?: number;
+  /** Unique candidates after pooling early and refined retrieval. */
+  mergedCandidates?: number;
 }
 
 /** Per-candidate relevance decision produced by the deterministic gate. */
@@ -269,6 +289,8 @@ export interface RelevanceVerdict {
   code: RelevanceDecisionCode | null;
   reason: string;
   matchedTokens: string[];
+  /** Strongest evidence tier for this decision (null when rejected). */
+  matchLevel?: RelevanceMatchLevel;
 }
 
 export interface ProductRecommendation {
@@ -358,12 +380,35 @@ export interface PipelineDiagnostics {
     scope: ShoppingIntent;
     candidates: number;
     kept: number;
-    excluded: Array<{ productId: string; code: RelevanceDecisionCode }>;
+    excluded: Array<{
+      productId: string;
+      code: RelevanceDecisionCode;
+      matchLevel?: RelevanceMatchLevel;
+    }>;
     missingIngredientData: boolean;
     /** Why the final product presentation was chosen. */
     displayPolicy: ProductDisplayPolicy;
     /** Structured retrieval outcome (searched/candidates/rejections). */
     outcome?: RetrievalOutcomeSummary | null;
+    /** Number of distinct catalog queries actually executed. */
+    queryCount?: number;
+    /** Candidate counts before the early/refined pool and after merging. */
+    earlyCandidates?: number;
+    refinedCandidates?: number;
+    mergedCandidates?: number;
+    /** Relevance-gate pass/reject counts across the pooled set. */
+    passCount?: number;
+    rejectCount?: number;
+    /** Top survivors with their ranking scores and traceable reasons. */
+    topCandidates?: Array<{ id: string; score: number; reason: string }>;
+    /** Final product ids emitted to the client, in ranking order. */
+    finalProductIds?: string[];
+    /** Machine-readable reason when no products were emitted. */
+    noProductsReason?: string | null;
+    /** True when at least one catalog query failed but others succeeded. */
+    partialFailure?: boolean;
+    /** Retrieval wall-clock latency in milliseconds. */
+    retrievalLatencyMs?: number;
   };
   timings: PipelineTimings;
 }

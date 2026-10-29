@@ -22,6 +22,7 @@ import type {
   CaseFacts,
   ProductCompatibility,
   ProductRecommendation,
+  RelevanceMatchLevel,
   RelevanceVerdict,
   RetrievalOutcomeSummary,
   ShoppingIntent,
@@ -29,12 +30,15 @@ import type {
 import type { ProductDetails } from "@/types/database";
 import { ingredientMatchesAllergen } from "./ingredients";
 import {
+  deterministicQueryVariants,
   evaluateCandidateRelevance,
+  hasTreatmentFormToken,
   inferShoppingIntent,
   meaningfulQueryTokens,
   symptomDomains,
 } from "./relevance-gate.ts";
 import { classifyProductKind } from "./product-classification";
+import { productScope, scopeDecision } from "./product-scope";
 
 const MAX_QUERIES = 3;
 const PER_QUERY_LIMIT = 8;
@@ -114,24 +118,24 @@ function ingredientNames(product: ProductDetails): string[] {
 }
 
 function buildQueries(facts: CaseFacts): string[] {
-  // When the model produced product queries they are the *only* thing we search
-  // with: they are short product-class / ingredient / category phrases, whereas
-  // `searchTerms` is the customer's own symptom phrasing. The raw user message
-  // is NEVER used as a query: sentence queries matched catalog noise (e.g.
-  // promoted beauty products for "Ali's eyes are red").
-  const primary =
-    facts.productQueries.length > 0
-      ? [...facts.productQueries]
-      : [...facts.searchTerms, facts.category ?? ""];
-  // Last-resort fallback: when neither product queries nor search terms exist,
-  // search with the raw symptom wording so a bare symptom still reaches the
-  // catalog instead of returning nothing.
-  const raw = primary.some((value) => value.trim().length >= 2)
-    ? primary
-    : facts.symptoms;
+  // Query sources in priority order:
+  //   1. The model's `productQueries` (short product-class/ingredient phrases).
+  //   2. Deterministic domain-derived product forms (bounded expansion), so a
+  //      symptom still reaches the right product FORM (drops/syrup/…) when the
+  //      model's queries are missing, weak or wrong — a weak AI query must
+  //      never be the only thing that stands between the user and eye drops.
+  //   3. `searchTerms` (the symptom phrasing) + category, as a fallback.
+  // The raw user message is NEVER used as a query: sentence queries matched
+  // catalog noise (e.g. promoted beauty products for "Ali's eyes are red").
+  const candidates = [
+    ...facts.productQueries,
+    ...deterministicQueryVariants(symptomDomains(facts)),
+    ...facts.searchTerms,
+    facts.category ?? "",
+  ];
   const seen = new Set<string>();
   const queries: string[] = [];
-  for (const value of raw) {
+  for (const value of candidates) {
     const trimmed = value.trim().replace(/\s+/g, " ");
     const key = trimmed.toLowerCase();
     if (trimmed.length < 2 || seen.has(key)) continue;
@@ -147,6 +151,18 @@ function buildQueries(facts: CaseFacts): string[] {
     seen.add(key);
     queries.push(trimmed.slice(0, 120));
     if (queries.length >= MAX_QUERIES) break;
+  }
+  // Last-resort fallback: when nothing above produced a query, search with the
+  // raw symptom wording so a bare symptom still reaches the catalog.
+  if (queries.length === 0) {
+    for (const symptom of facts.symptoms) {
+      const trimmed = symptom.trim().replace(/\s+/g, " ");
+      const key = trimmed.toLowerCase();
+      if (trimmed.length < 2 || seen.has(key)) continue;
+      seen.add(key);
+      queries.push(trimmed.slice(0, 120));
+      if (queries.length >= MAX_QUERIES) break;
+    }
   }
   return queries;
 }
@@ -185,14 +201,26 @@ function candidateSafetyNotes(
   return { compatibility, warnings, missingIngredientData };
 }
 
-function buildReason(product: ProductDetails, facts: CaseFacts): string {
+function buildReason(
+  product: ProductDetails,
+  facts: CaseFacts,
+  matchLevel: RelevanceMatchLevel,
+): string {
   const bits: string[] = [];
   const term =
     facts.productQueries[0] ??
     facts.searchTerms[0] ??
     facts.goal ??
     facts.category;
-  if (term) bits.push(`Matches “${term.slice(0, 48)}”`);
+  if (term) {
+    // A domain-only match is a candidate, not a confirmed treatment: say so in
+    // the traceable reason rather than overstating a broad category overlap.
+    bits.push(
+      matchLevel === "domain"
+        ? `Related to “${term.slice(0, 48)}” by category area only (not a confirmed treatment)`
+        : `Matches “${term.slice(0, 48)}”`,
+    );
+  }
   if (product.brand) bits.push(product.brand);
 
   const notable = product.ingredients
@@ -214,15 +242,38 @@ function scoreProduct(
   compatibility: ProductCompatibility,
   hasAllergyConstraint: boolean,
   relevanceTokens: number,
+  matchLevel: RelevanceMatchLevel,
+  intent: ShoppingIntent,
 ): number {
   let score = rank;
-  // Relevance dominates: a less-popular but genuinely relevant product must
-  // outrank a promoted but unrelated one.
-  if (relevanceTokens > 0) score += 0.5 + relevanceTokens * 0.3;
-  if (product.ingredients.length > 0) score += 1;
-  if (product.image_urls?.some((url) => url && url.trim())) score += 0.5;
-  if (product.price != null) score += 0.3;
-  if (product.availability === "InStock") score += 0.4;
+  // Relevance tier dominates the ordering: a direct form/class/ingredient
+  // match outranks a body-area (domain) match, which outranks a name-only
+  // match. This keeps a broad category overlap from beating a real match.
+  switch (matchLevel) {
+    case "direct":
+      score += 2.5 + relevanceTokens * 0.25;
+      break;
+    case "domain":
+      score += 1.0 + relevanceTokens * 0.2;
+      break;
+    case "name":
+      score += 0.5;
+      break;
+    default:
+      break;
+  }
+  // For symptom shopping, a treatment FORM (drops/syrup/tablet) is stronger
+  // evidence of suitability than a supplement class that merely shares the
+  // body area: an eye drop addresses red eyes directly, an eye supplement does
+  // not. Availability/image/price signals below must never outweigh this.
+  if (intent === "medical_symptom") {
+    if (hasTreatmentFormToken(product)) score += 1.0;
+    if (classifyProductKind(product) === "supplement") score -= 0.75;
+  }
+  if (product.ingredients.length > 0) score += 0.6;
+  if (product.image_urls?.some((url) => url && url.trim())) score += 0.3;
+  if (product.price != null) score += 0.2;
+  if (product.availability === "InStock") score += 0.3;
   if (hasAllergyConstraint && compatibility === "compatible") score += 0.5;
   if (compatibility === "unknown") score -= 0.25;
   return Number(score.toFixed(3));
@@ -320,16 +371,14 @@ export async function retrieveProducts(params: {
     compatibility: ProductCompatibility;
     warnings: string[];
     matchedTokens: string[];
+    matchLevel: RelevanceMatchLevel;
   }> = [];
   const decisions: RelevanceVerdict[] = [];
   let missingIngredientData = false;
   let rejectedRelevance = 0;
   let rejectedSafety = 0;
   let rejectedCosmetic = 0;
-
-  // Symptom and supplement shopping may surface OTC medicines (eye drops,
-  // cough syrups, …) as well as supplements, but never cosmetics.
-  const excludeCosmetics = intent === "medical_symptom" || intent === "supplement";
+  let rejectedScope = 0;
 
   for (const { product: summaryProduct, rank } of merged) {
     const product = enrichedById.get(summaryProduct.id) ?? summaryProduct;
@@ -347,6 +396,7 @@ export async function retrieveProducts(params: {
         code: "allergy_conflict",
         reason: "Product contains an ingredient the customer is allergic to.",
         matchedTokens: [],
+        matchLevel: null,
       });
       continue;
     }
@@ -365,22 +415,23 @@ export async function retrieveProducts(params: {
       continue;
     }
 
-    // Cosmetics are excluded for symptom and supplement shopping; OTC
-    // medicines (eye drops, cough syrups, …) remain eligible. This is applied
-    // server-side so the model can never promote a cosmetic product.
-    if (excludeCosmetics) {
-      const kind = classifyProductKind(product);
-      if (kind === "cosmetic") {
-        rejectedCosmetic += 1;
-        decisions.push({
-          productId: product.id,
-          pass: false,
-          code: "cosmetic_excluded",
-          reason: "Cosmetic products are not recommended for this request.",
-          matchedTokens: verdict.matchedTokens,
-        });
-        continue;
-      }
+    // Explicit product-scope enforcement (see ./product-scope.ts): symptom and
+    // supplement shopping may surface OTC medicines (eye drops, cough syrups,
+    // …) as well as supplements, but never cosmetics. Applied server-side so
+    // the model can never promote a cosmetic product.
+    const scopeCheck = scopeDecision(productScope(product), intent);
+    if (!scopeCheck.eligible) {
+      if (scopeCheck.code === "cosmetic_excluded") rejectedCosmetic += 1;
+      else rejectedScope += 1;
+      decisions.push({
+        productId: product.id,
+        pass: false,
+        code: scopeCheck.code,
+        reason: scopeCheck.reason,
+        matchedTokens: verdict.matchedTokens,
+        matchLevel: verdict.matchLevel ?? null,
+      });
+      continue;
     }
 
     const notes = candidateSafetyNotes(
@@ -396,6 +447,7 @@ export async function retrieveProducts(params: {
       compatibility: notes.compatibility,
       warnings: notes.warnings,
       matchedTokens: verdict.matchedTokens,
+      matchLevel: verdict.matchLevel ?? null,
     });
   }
 
@@ -412,9 +464,13 @@ export async function retrieveProducts(params: {
         candidate.compatibility,
         hasAllergyConstraint,
         candidate.matchedTokens.length,
+        candidate.matchLevel,
+        intent,
       ),
     }))
-    .sort((a, b) => b.score - a.score)
+    .sort(
+      (a, b) => b.score - a.score || a.product.id.localeCompare(b.product.id),
+    )
     .slice(0, limit);
 
   const products = await Promise.all(
@@ -438,7 +494,7 @@ export async function retrieveProducts(params: {
           product.categories[0],
           language,
         ),
-        reason: buildReason(product, facts),
+        reason: buildReason(product, facts, candidate.matchLevel),
         compatibility: candidate.compatibility,
         warnings: candidate.warnings,
         score: candidate.score,
@@ -465,6 +521,7 @@ export async function retrieveProducts(params: {
       rejectedRelevance,
       rejectedSafety,
       rejectedCosmetic,
+      rejectedScope,
       failedQueries,
       kept: products.length,
     },

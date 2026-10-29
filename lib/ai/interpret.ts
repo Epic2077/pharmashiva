@@ -41,6 +41,28 @@ function asStringArray(value: unknown, limit = 8): string[] {
   return out;
 }
 
+/**
+ * Generic nouns that are never a usable catalog query on their own: a bare
+ * "medicine"/"supplement"/"eye"/"دارو" tells us nothing about the product class
+ * or ingredient for THIS case and would re-query the whole catalog. Exact
+ * matches only — a phrase like "قطره چشم" (eye drops) is still allowed.
+ */
+const BROAD_QUERY_TERMS = new Set([
+  "medicine", "medicines", "drug", "drugs", "product", "products", "health",
+  "healthy", "supplement", "supplements", "vitamin", "vitamins", "treatment",
+  "remedy", "remedies", "pill", "pills", "eye", "eyes", "skin", "hair", "pain",
+  "cough", "cold",
+  "دارو", "مکمل", "ویتامین", "درمان", "چشم", "پوست", "مو", "درد",
+]);
+
+/** Coerce AI product queries, dropping empty, malformed or overly-broad ones. */
+function asProductQueries(value: unknown, limit = 3): string[] {
+  return asStringArray(value, limit).filter((query) => {
+    const norm = query.toLowerCase().trim();
+    return !BROAD_QUERY_TERMS.has(norm);
+  });
+}
+
 function asAge(value: unknown): number | null {
   const number = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(number) || number <= 0 || number >= 130) return null;
@@ -76,7 +98,7 @@ export function parseCaseFacts(raw: unknown, fallback: CaseFacts): CaseFacts {
       fallback.searchTerms,
     ).slice(0, 4),
     productQueries: unionUnique(
-      asStringArray(record.productQueries, 3),
+      asProductQueries(record.productQueries, 3),
       fallback.productQueries,
     ).slice(0, 3),
   };

@@ -177,8 +177,13 @@ export function memoryToFacts(memory: CaseMemory): CaseFacts {
     missingInformation: [],
     statedFacts: memory.notes,
     inferredFacts: [],
-    searchTerms: memory.productQueries,
-    productQueries: memory.productQueries,
+    // Search terms are the symptom history (used as a deterministic fallback
+    // for retrieval and medical reference). `productQueries` in memory is
+    // historical context only — it must NOT be replayed as though it were the
+    // current turn's search intent (that bug made a stale "eye supplement"
+    // query displace fresh symptom-driven results).
+    searchTerms: memory.symptoms,
+    productQueries: [],
     customerName: memory.customerName,
   };
 }
