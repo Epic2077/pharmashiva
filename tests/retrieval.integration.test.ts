@@ -498,3 +498,57 @@ test("medicines present → interaction-verification warning attached", async ()
     ),
   );
 });
+
+test("OTC medicines pass for symptom shopping; cosmetics are still excluded", async () => {
+  const eyeDropsMedicine = makeProduct({
+    id: "eye-drops-med",
+    name: "Eye Drops",
+    name_en: "Eye Drops",
+    canonical_url: "https://darukade.com/products/eye-drops-123",
+    categories: [makeCategory("Eye care"), makeCategory("Eye drops")],
+    detailLoaded: true,
+  });
+  const cosmeticSerum = makeProduct({
+    id: "cosmetic-serum-1",
+    name: "Eye Serum",
+    name_en: "Eye Serum",
+    canonical_url: "https://darukade.com/cosmetic-eye-serum-9",
+    categories: [makeCategory("Eye care")],
+    detailLoaded: true,
+  });
+  const facts = makeFacts({
+    symptoms: ["red eye"],
+    productQueries: ["قطره چشم"],
+  });
+  const dependencies: RetrievalDependencies = {
+    search: searchReturning([
+      { product: eyeDropsMedicine, rank: 1 },
+      { product: cosmeticSerum, rank: 0.9 },
+    ]),
+    enrich: enrichPassthrough(),
+    localizeCategory: localizeIdentity(),
+  };
+
+  const result = await retrieveProducts({
+    facts,
+    message: "red eye",
+    language: "en",
+    provisional: false,
+    signal,
+    dependencies,
+  });
+
+  // The medicine eye drop is now eligible; the cosmetic is excluded.
+  assert.deepEqual(
+    result.products.map((item) => item.product.id),
+    ["eye-drops-med"],
+  );
+  assert.ok(
+    result.decisions.some(
+      (verdict) =>
+        verdict.productId === "cosmetic-serum-1" &&
+        verdict.code === "cosmetic_excluded",
+    ),
+    "cosmetic exclusion must still be recorded machine-readably",
+  );
+});

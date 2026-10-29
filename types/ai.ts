@@ -238,7 +238,7 @@ export type RelevanceDecisionCode =
   | "insufficient_product_data"
   | "allergy_conflict"
   | "no_queryable_intent"
-  | "not_a_supplement";
+  | "cosmetic_excluded";
 
 /**
  * Machine-readable summary of one retrieval run, so diagnostics can tell apart
@@ -254,8 +254,8 @@ export interface RetrievalOutcomeSummary {
   rejectedRelevance: number;
   /** Candidates rejected by the hard allergy constraint. */
   rejectedSafety: number;
-  /** Candidates rejected because they are not supplements. */
-  rejectedNotSupplement: number;
+  /** Candidates rejected because they are cosmetics. */
+  rejectedCosmetic: number;
   /** Catalog queries that failed (network/parse). */
   failedQueries: number;
   /** Candidates that survived every filter. */

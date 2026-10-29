@@ -258,7 +258,7 @@ export async function retrieveProducts(params: {
         candidatesFound: 0,
         rejectedRelevance: 0,
         rejectedSafety: 0,
-        rejectedNotSupplement: 0,
+        rejectedCosmetic: 0,
         failedQueries: 0,
         kept: 0,
       },
@@ -325,10 +325,11 @@ export async function retrieveProducts(params: {
   let missingIngredientData = false;
   let rejectedRelevance = 0;
   let rejectedSafety = 0;
-  let rejectedNotSupplement = 0;
+  let rejectedCosmetic = 0;
 
-  const supplementOnly =
-    intent === "medical_symptom" || intent === "supplement";
+  // Symptom and supplement shopping may surface OTC medicines (eye drops,
+  // cough syrups, …) as well as supplements, but never cosmetics.
+  const excludeCosmetics = intent === "medical_symptom" || intent === "supplement";
 
   for (const { product: summaryProduct, rank } of merged) {
     const product = enrichedById.get(summaryProduct.id) ?? summaryProduct;
@@ -364,17 +365,18 @@ export async function retrieveProducts(params: {
       continue;
     }
 
-    // Supplement-only rule: the recommendation cards must contain supplements
-    // only. Medicines and cosmetics are excluded server-side, never by the AI.
-    if (supplementOnly) {
+    // Cosmetics are excluded for symptom and supplement shopping; OTC
+    // medicines (eye drops, cough syrups, …) remain eligible. This is applied
+    // server-side so the model can never promote a cosmetic product.
+    if (excludeCosmetics) {
       const kind = classifyProductKind(product);
-      if (kind === "medicine" || kind === "cosmetic") {
-        rejectedNotSupplement += 1;
+      if (kind === "cosmetic") {
+        rejectedCosmetic += 1;
         decisions.push({
           productId: product.id,
           pass: false,
-          code: "not_a_supplement",
-          reason: `Product is classified as ${kind}; only supplements are recommended.`,
+          code: "cosmetic_excluded",
+          reason: "Cosmetic products are not recommended for this request.",
           matchedTokens: verdict.matchedTokens,
         });
         continue;
@@ -462,7 +464,7 @@ export async function retrieveProducts(params: {
       candidatesFound: merged.length,
       rejectedRelevance,
       rejectedSafety,
-      rejectedNotSupplement,
+      rejectedCosmetic,
       failedQueries,
       kept: products.length,
     },

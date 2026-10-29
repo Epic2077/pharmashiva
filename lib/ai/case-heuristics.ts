@@ -15,6 +15,7 @@ import {
   hasUnnegatedTerm,
   isResolvedMention,
   normaliseHealthText,
+  termIsDenied,
   unnegatedPattern,
 } from "../safety/text.ts";
 
@@ -345,11 +346,19 @@ function extractAge(text: string): number | null {
 }
 
 function extractPregnancy(text: string): boolean | null {
-  if (
-    /pregnan|breastfeed|breast-feeding|lactat|باردار|شیرده|شيرده/i.test(text)
-  ) {
-    return true;
-  }
+  const terms = [
+    "pregnan",
+    "breastfeed",
+    "breast-feeding",
+    "lactat",
+    "باردار",
+    "شیرده",
+    "شيرده",
+  ];
+  if (terms.some((term) => hasUnnegatedTerm(text, term))) return true;
+  // An explicit denial ("not pregnant", "باردار نیست") must clear the flag,
+  // not re-raise it on a later turn.
+  if (terms.some((term) => termIsDenied(text, term))) return false;
   return null;
 }
 
@@ -397,10 +406,10 @@ export function extractHeuristicFacts(message: string): CaseFacts {
     statedFacts: [],
     inferredFacts: [],
     searchTerms: buildSearchTerms(message, symptoms),
-    // The model is the only thing that turns a case into *product* queries
-    // (active ingredient / product class / category). Heuristics cannot, so they
-    // leave this empty rather than feeding the raw message to product search —
-    // which would match noise (e.g. "10" in "10/10") and bury the real products.
+    // The AI model is what turns a case into *product* queries (product class,
+    // category, active ingredient) on the spot. Heuristics only lift symptoms;
+    // they never feed the raw message to product search, which would match
+    // noise (e.g. "10" in "10/10") and bury the real products.
     productQueries: [],
   };
 }

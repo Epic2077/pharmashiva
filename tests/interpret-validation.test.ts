@@ -72,3 +72,8 @@ test("parseFollowUpQuestions validates the untrusted model field", () => {
   assert.deepEqual(parseFollowUpQuestions(null), []);
   assert.deepEqual(parseFollowUpQuestions({ followUpQuestions: [""] }), []);
 });
+
+test("an explicit 'not pregnant' denial clears the pregnancy flag", () => {
+  const facts = extractHeuristicFacts("the customer is not pregnant");
+  assert.equal(facts.pregnancy, false);
+});
